@@ -24,6 +24,7 @@ export type NetworkSettings = {
 export type DeviceSettings = {
   channelUrl: string;
   catalogUrl: string;
+  shellUrl: string;
   display: DisplaySettings;
   network: NetworkSettings;
 };
@@ -75,6 +76,10 @@ export type SystemInfo = {
   dataDir: string;
   channelUrl?: string;
   catalogUrl?: string;
+  panelUrl?: string;
+  shellVersion?: string | null;
+  shellSynced?: boolean;
+  shellReady?: boolean;
   display?: DisplaySettings;
 };
 
@@ -198,6 +203,19 @@ export const api = {
     request<{ ok: boolean; message: string }>("/update", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  syncShell: (shellUrl?: string) =>
+    request<{
+      ok: boolean;
+      updated: boolean;
+      message: string;
+      shellUrl?: string;
+      shellVersion?: string | null;
+      shellSynced?: boolean;
+      shellReady?: boolean;
+    }>("/shell/sync", {
+      method: "POST",
+      body: JSON.stringify(shellUrl ? { shellUrl } : {}),
     }),
 };
 

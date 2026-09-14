@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}/apps/shell"
 npm ci
 npm run build
+"${ROOT}/scripts/build-shell-manifest.sh" "${ROOT}/apps/shell/out"
 DEST="${ROOT}/meta-blackhole/recipes-core/blackhole-shell/files/shell-out"
 rm -rf "${DEST}"
 cp -R out "${DEST}"

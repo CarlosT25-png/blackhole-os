@@ -85,6 +85,7 @@ export default function SettingsView({
   const [btSelected, setBtSelected] = useState("");
   const [channelUrl, setChannelUrl] = useState("");
   const [catalogUrl, setCatalogUrl] = useState("");
+  const [panelUrl, setPanelUrl] = useState("");
   const [manualSource, setManualSource] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -101,6 +102,7 @@ export default function SettingsView({
         setSelectedSsid(settingsRes.settings.network.ssid || "");
         setChannelUrl(settingsRes.settings.channelUrl || "");
         setCatalogUrl(settingsRes.settings.catalogUrl || "");
+        setPanelUrl(settingsRes.settings.shellUrl || "");
         applyDisplay(settingsRes.settings.display);
       } catch (err) {
         showToast(err instanceof Error ? err.message : "Settings unavailable", "error");
@@ -261,6 +263,47 @@ export default function SettingsView({
       showToast("Catalog URL saved");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not save catalog URL", "error");
+    }
+  };
+
+  const savePanelUrl = async () => {
+    const url = panelUrl.trim().replace(/\/$/, "");
+    if (!url) {
+      showToast("Enter a panel URL", "error");
+      return;
+    }
+    try {
+      const res = await api.saveSettings({ shellUrl: url });
+      setSettings(res.settings);
+      setPanelUrl(res.settings.shellUrl || url);
+      showToast("Panel URL saved");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not save panel URL", "error");
+    }
+  };
+
+  const checkShellUpdate = async () => {
+    setBusy(true);
+    try {
+      const url = panelUrl.trim().replace(/\/$/, "");
+      if (url) {
+        await api.saveSettings({ shellUrl: url });
+      }
+      const result = await api.syncShell(url || undefined);
+      if (system) {
+        onSystemChange({
+          ...system,
+          panelUrl: result.shellUrl,
+          shellVersion: result.shellVersion,
+          shellSynced: result.shellSynced,
+          shellReady: result.shellReady,
+        });
+      }
+      showToast(result.message, result.ok ? "info" : "error");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Shell sync failed", "error");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -668,6 +711,16 @@ export default function SettingsView({
                   <dt>RAUC</dt>
                   <dd>{update?.available ? "Ready" : update?.message ?? "…"}</dd>
                 </div>
+                <div>
+                  <dt>Shell UI</dt>
+                  <dd>
+                    {system?.shellVersion
+                      ? `${system.shellVersion.slice(0, 12)}…`
+                      : system?.shellReady
+                        ? "Bundled"
+                        : "Not ready"}
+                  </dd>
+                </div>
                 {update?.remote ? (
                   <div>
                     <dt>Channel</dt>
@@ -684,6 +737,46 @@ export default function SettingsView({
               ) : null}
 
               <div className="settings-stack">
+                <label className="field-label" htmlFor="panel-url">
+                  Panel URL (shell UI sync)
+                </label>
+                <Focusable
+                  as="div"
+                  focusKey="SET_PANEL"
+                  className="store-field store-field-bare"
+                  onEnterPress={() => {
+                    document.getElementById("panel-url")?.focus();
+                  }}
+                >
+                  <input
+                    id="panel-url"
+                    value={panelUrl}
+                    onChange={(e) => setPanelUrl(e.target.value)}
+                    placeholder="https://blackhole-os-panel.carlostorres.dev"
+                    aria-label="Panel URL for shell sync"
+                  />
+                </Focusable>
+                <div className="button-row">
+                  <Focusable
+                    focusKey="SET_PANEL_SAVE"
+                    className="pager-btn"
+                    onEnterPress={() => void savePanelUrl()}
+                  >
+                    Save panel URL
+                  </Focusable>
+                  <Focusable
+                    focusKey="SET_SHELL_SYNC"
+                    className="primary-btn"
+                    onEnterPress={() => void checkShellUpdate()}
+                  >
+                    {busy ? "Syncing…" : "Check for shell update"}
+                  </Focusable>
+                </div>
+                <p className="panel-copy">
+                  Downloads the hosted shell into local storage for offline use.
+                  Installed apps are not changed.
+                </p>
+
                 <label className="field-label" htmlFor="catalog-url">
                   App store catalog URL
                 </label>
@@ -699,7 +792,7 @@ export default function SettingsView({
                     id="catalog-url"
                     value={catalogUrl}
                     onChange={(e) => setCatalogUrl(e.target.value)}
-                    placeholder="https://…/catalog/apps.json"
+                    placeholder="https://blackhole-os-panel.carlostorres.dev/catalog/apps.json"
                     aria-label="App store catalog URL"
                   />
                 </Focusable>

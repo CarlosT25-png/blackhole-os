@@ -8,7 +8,9 @@ Type=simple
 Environment=BLACKHOLE_DEV=0
 Environment=BLACKHOLE_DATA=/var/lib/blackhole
 Environment=BLACKHOLE_CATALOG=/etc/blackhole/catalog.json
-Environment=BLACKHOLE_CATALOG_URL=http://127.0.0.1/catalog/apps.json
+Environment=BLACKHOLE_CATALOG_URL=https://blackhole-os-panel.carlostorres.dev/catalog/apps.json
+Environment=BLACKHOLE_SHELL_UPDATE_URL=https://blackhole-os-panel.carlostorres.dev
+Environment=BLACKHOLE_BUNDLED_SHELL=/usr/share/blackhole/shell
 Environment=BLACKHOLE_SHELL_URL=http://127.0.0.1/
 Environment=BLACKHOLE_HOST=127.0.0.1
 Environment=BLACKHOLE_PORT=8081

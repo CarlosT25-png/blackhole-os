@@ -15,7 +15,7 @@ Wayland kiosk compositor
 ```
 
 Installed apps live on a persistent data partition so they survive OTA updates.
-The store catalog is hosted with the Next.js shell and cached locally for offline use.
+The store catalog and shell UI are hosted on Vercel and cached locally for offline use.
 
 ## Repository layout
 
@@ -30,6 +30,7 @@ The store catalog is hosted with the Next.js shell and cached locally for offlin
 | `kas/` | Reproducible image builds |
 | `scripts/dev-kiosk.sh` | Desktop Chromium kiosk for daily development |
 | `scripts/sync-catalog.sh` | Copy catalog into shell public + Yocto recipe |
+| `scripts/build-shell-manifest.sh` | Write `shell-manifest.json` after Next export |
 
 ## App store catalog (online + offline)
 
@@ -37,7 +38,8 @@ Edit **`catalog/apps.json`**, then sync and deploy the shell:
 
 ```bash
 ./scripts/sync-catalog.sh
-# develop / host apps/shell — catalog is at /catalog/apps.json
+# deploy apps/shell to https://blackhole-os-panel.carlostorres.dev
+# catalog is served at /catalog/apps.json
 ```
 
 `blackholed` keeps a local offline copy at `data/catalog.json` (on device:
@@ -45,12 +47,35 @@ Edit **`catalog/apps.json`**, then sync and deploy the shell:
 `catalogUrl`, compares a content hash, and updates the local file only when the
 remote list differs. Offline Store + installs use the local cache.
 
-Default `catalogUrl` is `http://127.0.0.1:3000/catalog/apps.json` in desktop
-dev, and `http://127.0.0.1/catalog/apps.json` on the image. Change it under
-**Settings → Updates**, or set `BLACKHOLE_CATALOG_URL`.
+Default `catalogUrl` is
+`https://blackhole-os-panel.carlostorres.dev/catalog/apps.json`.
+Change it under **Settings → Updates**, or set `BLACKHOLE_CATALOG_URL`.
+Offline devices keep using the bundled/`data/catalog.json` cache until they
+can reach that host.
 
 Installed apps remain separate in `data/apps.json` and are not overwritten by
 catalog sync.
+
+## Shell UI sync (Vercel → local overlay)
+
+Deploying the panel updates the **on-device shell UI** without a full OS OTA and
+without touching installed PWAs.
+
+```bash
+cd apps/shell
+npm run build   # also writes out/shell-manifest.json
+# deploy out/ (or the Vercel project) to https://blackhole-os-panel.carlostorres.dev
+```
+
+On the TV, nginx serves `/var/lib/blackhole/shell` (seeded once from the image).
+`blackholed` fetches `{shellUrl}/shell-manifest.json`, and when `version` changes
+downloads each file into that overlay. Offline boots keep the last synced UI.
+
+- Default panel URL: `https://blackhole-os-panel.carlostorres.dev`
+- Settings → Updates → **Check for shell update**, or `POST /shell/sync`
+- Env: `BLACKHOLE_SHELL_UPDATE_URL`
+
+Chromium still opens `http://127.0.0.1/` (local), not Vercel, so the UI works offline.
 
 ## Desktop development (recommended daily loop)
 

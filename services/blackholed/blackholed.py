@@ -24,6 +24,9 @@ DEFAULT_DATA = Path(os.environ.get("BLACKHOLE_DATA", ROOT / "data"))
 BUNDLED_CATALOG = Path(
     os.environ.get("BLACKHOLE_CATALOG", ROOT / "catalog" / "apps.json")
 )
+BUNDLED_SHELL = Path(
+    os.environ.get("BLACKHOLE_BUNDLED_SHELL", "/usr/share/blackhole/shell")
+)
 SHELL_URL = os.environ.get("BLACKHOLE_SHELL_URL", "http://127.0.0.1:3000")
 DEFAULT_CHANNEL = os.environ.get(
     "BLACKHOLE_CHANNEL_URL",
@@ -32,12 +35,12 @@ DEFAULT_CHANNEL = os.environ.get(
 DEV_MODE = os.environ.get("BLACKHOLE_DEV", "1") == "1"
 DEFAULT_CATALOG_URL = os.environ.get(
     "BLACKHOLE_CATALOG_URL",
-    (
-        "http://127.0.0.1:3000/catalog/apps.json"
-        if DEV_MODE
-        else "http://127.0.0.1/catalog/apps.json"
-    ),
+    "https://blackhole-os-panel.carlostorres.dev/catalog/apps.json",
 )
+DEFAULT_SHELL_UPDATE_URL = os.environ.get(
+    "BLACKHOLE_SHELL_UPDATE_URL",
+    "https://blackhole-os-panel.carlostorres.dev",
+).rstrip("/")
 HOST = os.environ.get("BLACKHOLE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BLACKHOLE_PORT", "8081"))
 VERSION = os.environ.get("BLACKHOLE_VERSION", "0.1.0-dev")
@@ -46,6 +49,7 @@ MACHINE = os.environ.get("BLACKHOLE_MACHINE", "desktop")
 DEFAULT_SETTINGS: dict[str, Any] = {
     "channelUrl": DEFAULT_CHANNEL,
     "catalogUrl": DEFAULT_CATALOG_URL,
+    "shellUrl": DEFAULT_SHELL_UPDATE_URL,
     "display": {
         "scale": 100,
         "reducedMotion": False,
@@ -70,6 +74,14 @@ def apps_file() -> Path:
 
 def catalog_cache_file() -> Path:
     return data_dir() / "catalog.json"
+
+
+def shell_overlay_dir() -> Path:
+    return data_dir() / "shell"
+
+
+def shell_version_file() -> Path:
+    return data_dir() / "shell-version.json"
 
 
 def launch_file() -> Path:
@@ -221,6 +233,178 @@ def load_catalog(sync: bool = True) -> list[dict[str, Any]]:
     if sync:
         return sync_catalog_from_remote()
     return ensure_catalog_cache()
+
+
+def local_shell_version() -> str | None:
+    stamp = load_json(shell_version_file(), {})
+    if isinstance(stamp, dict):
+        version = stamp.get("version")
+        if isinstance(version, str) and version:
+            return version
+    return None
+
+
+def shell_status() -> dict[str, Any]:
+    settings = load_settings()
+    overlay = shell_overlay_dir()
+    return {
+        "shellUrl": str(settings.get("shellUrl") or DEFAULT_SHELL_UPDATE_URL).rstrip("/"),
+        "shellVersion": local_shell_version(),
+        "shellOverlay": str(overlay),
+        "shellReady": (overlay / "index.html").is_file(),
+        "shellSynced": local_shell_version() is not None,
+    }
+
+
+def ensure_shell_overlay() -> bool:
+    """Seed data/shell from the image bundle. Never touches apps.json."""
+    overlay = shell_overlay_dir()
+    index = overlay / "index.html"
+    if index.is_file():
+        return True
+    if not BUNDLED_SHELL.is_dir():
+        return False
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    if overlay.exists():
+        shutil.rmtree(overlay)
+    shutil.copytree(BUNDLED_SHELL, overlay)
+    return index.is_file()
+
+
+def _safe_shell_relpath(raw: str) -> str:
+    path = raw.strip()
+    if not path.startswith("/") or path.startswith("//") or ".." in path.split("/"):
+        raise ValueError(f"Unsafe shell path: {raw}")
+    return path.lstrip("/")
+
+
+def download_bytes(url: str, timeout: float = 60.0) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "blackholed/0.1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Download failed ({url}): {exc}") from exc
+
+
+def sync_shell_from_remote(shell_url: str | None = None) -> dict[str, Any]:
+    """
+    Pull shell UI from the hosted panel into data/shell when the manifest version
+    changes. Installed PWAs (apps.json) are never modified.
+    """
+    ensure_shell_overlay()
+    settings = load_settings()
+    origin = (
+        shell_url or str(settings.get("shellUrl") or DEFAULT_SHELL_UPDATE_URL)
+    ).strip().rstrip("/")
+    if not origin:
+        return {
+            "ok": False,
+            "updated": False,
+            "message": "No shellUrl configured",
+            **shell_status(),
+        }
+
+    manifest_url = f"{origin}/shell-manifest.json"
+    try:
+        manifest = fetch_json(manifest_url, timeout=12.0)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "updated": False,
+            "message": str(exc),
+            **shell_status(),
+        }
+
+    version = str(manifest.get("version") or "").strip()
+    files = manifest.get("files")
+    if not version or not isinstance(files, list) or not files:
+        return {
+            "ok": False,
+            "updated": False,
+            "message": "Invalid shell-manifest.json",
+            **shell_status(),
+        }
+
+    current = local_shell_version()
+    if current == version and (shell_overlay_dir() / "index.html").is_file():
+        if origin != settings.get("shellUrl"):
+            settings["shellUrl"] = origin
+            save_settings(settings)
+        return {
+            "ok": True,
+            "updated": False,
+            "message": f"Shell up to date ({version[:12]}…)",
+            **shell_status(),
+        }
+
+    staging = data_dir() / "shell.staging"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        for item in files:
+            if not isinstance(item, dict):
+                raise ValueError("Manifest file entry must be an object")
+            rel = _safe_shell_relpath(str(item.get("path") or ""))
+            expected = str(item.get("sha256") or "").strip().lower()
+            if not expected:
+                raise ValueError(f"Missing sha256 for {rel}")
+            url = urllib.parse.urljoin(origin + "/", rel)
+            payload = download_bytes(url)
+            digest = hashlib.sha256(payload).hexdigest()
+            if digest != expected:
+                raise ValueError(f"sha256 mismatch for /{rel}")
+            dest = staging / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(payload)
+
+        if not (staging / "index.html").is_file():
+            raise ValueError("Downloaded shell is missing index.html")
+
+        overlay = shell_overlay_dir()
+        backup = data_dir() / "shell.prev"
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        if overlay.exists():
+            overlay.rename(backup)
+        try:
+            staging.rename(overlay)
+        except OSError:
+            if backup.exists() and not overlay.exists():
+                backup.rename(overlay)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+
+        save_json(
+            shell_version_file(),
+            {
+                "version": version,
+                "shellUrl": origin,
+                "syncedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+        )
+        settings["shellUrl"] = origin
+        save_settings(settings)
+        return {
+            "ok": True,
+            "updated": True,
+            "message": f"Shell updated to {version[:12]}…",
+            **shell_status(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        return {
+            "ok": False,
+            "updated": False,
+            "message": f"Shell sync failed: {exc}",
+            **shell_status(),
+        }
 
 
 def slugify(value: str) -> str:
@@ -1061,6 +1245,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"bluetooth": bluetooth_status()})
             if path == "/system":
                 settings = load_settings()
+                status = shell_status()
                 return self._send(
                     200,
                     {
@@ -1077,6 +1262,10 @@ class Handler(BaseHTTPRequestHandler):
                         "dataDir": str(data_dir()),
                         "channelUrl": settings.get("channelUrl"),
                         "catalogUrl": settings.get("catalogUrl"),
+                        "panelUrl": status.get("shellUrl"),
+                        "shellVersion": status.get("shellVersion"),
+                        "shellSynced": status.get("shellSynced"),
+                        "shellReady": status.get("shellReady"),
                         "display": settings.get("display"),
                     },
                 )
@@ -1122,6 +1311,15 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._read_json()
                 apps = reorder_apps(body.get("ids"))
                 return self._send(200, {"apps": apps})
+
+            if path == "/shell/sync":
+                body = {}
+                if int(self.headers.get("Content-Length", "0") or "0"):
+                    body = self._read_json()
+                shell_url = str(body.get("shellUrl") or "").strip() or None
+                result = sync_shell_from_remote(shell_url)
+                code = 200 if result.get("ok") else 502
+                return self._send(code, result)
 
             if path == "/apps":
                 body = self._read_json()
@@ -1288,8 +1486,10 @@ def main() -> None:
     data_dir()
     save_settings(load_settings())
     ensure_catalog_cache()
-    # Best-effort remote refresh at startup; offline keeps local cache.
+    ensure_shell_overlay()
+    # Best-effort remote refresh at startup; offline keeps local cache/overlay.
     sync_catalog_from_remote()
+    sync_shell_from_remote()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"blackholed listening on http://{HOST}:{PORT} (dev={DEV_MODE})", flush=True)
     try:
