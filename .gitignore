@@ -1,0 +1,40 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local data / secrets
+data/
+*.pem
+*.key
+!meta-blackhole/recipes-core/rauc/files/devel-ca.cert.pem
+!meta-blackhole/recipes-core/rauc/files/devel.key.pem
+
+# Yocto / kas
+build/
+sstate-cache/
+downloads/
+tmp/
+.kas/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Chromium / extensions
+extensions/ublock/
+scripts/.chromium-profile/
+*.crx

@@ -1,0 +1,76 @@
+header:
+  version: 14
+  description: Blackhole OS common kas configuration (Scarthgap)
+
+distro: blackhole
+
+target:
+  - blackhole-image
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/git/poky
+    branch: scarthgap
+    layers:
+      meta:
+      meta-poky:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    branch: scarthgap
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-multimedia:
+
+  meta-raspberrypi:
+    url: https://github.com/agherzan/meta-raspberrypi
+    branch: scarthgap
+
+  meta-clang:
+    url: https://github.com/kraj/meta-clang
+    branch: scarthgap
+
+  meta-browser:
+    url: https://github.com/OSSystems/meta-browser
+    branch: master
+    layers:
+      meta-chromium:
+
+  meta-rauc:
+    url: https://github.com/rauc/meta-rauc
+    branch: scarthgap
+
+  meta-rauc-community:
+    url: https://github.com/rauc/meta-rauc-community
+    branch: scarthgap
+    layers:
+      meta-rauc-raspberrypi:
+      meta-rauc-qemux86:
+
+  meta-blackhole:
+    path: ../meta-blackhole
+
+local_conf_header:
+  blackhole-common: |
+    CONF_VERSION = "2"
+    PACKAGE_CLASSES = "package_ipk"
+    EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+    USER_CLASSES ?= "buildstats"
+    PATCHRESOLVE = "noop"
+    BB_DISKMON_DIRS ??= "\
+        STOPTASKS,${TMPDIR},1G,100M \
+        STOPTASKS,${DL_DIR},1G,100M \
+        STOPTASKS,${SSTATE_DIR},1G,100M \
+        STOPTASKS,/tmp,100M,10M \
+        HALT,${TMPDIR},100M,1K \
+        HALT,${DL_DIR},100M,1K \
+        HALT,${SSTATE_DIR},100M,1K \
+        HALT,/tmp,10M,1K"
+    DISTRO_FEATURES:append = " rauc systemd wayland opengl"
+    IMAGE_FSTYPES:append = " ext4 wic wic.bmap"
+    IMAGE_INSTALL:append = " rauc"
+    # Chromium builds are heavy
+    BB_NUMBER_THREADS ?= "${@oe.utils.cpu_count()}"
+    PARALLEL_MAKE ?= "-j ${@oe.utils.cpu_count()}"

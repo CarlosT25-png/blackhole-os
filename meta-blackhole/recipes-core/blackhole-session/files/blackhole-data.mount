@@ -1,0 +1,14 @@
+[Unit]
+Description=Blackhole persistent data partition
+Before=blackholed.service blackhole-kiosk.service
+After=local-fs.target
+
+[Mount]
+# Partition label set in WKS; adjust per machine if needed.
+What=/dev/disk/by-label/bhdata
+Where=/var/lib/blackhole
+Type=ext4
+Options=defaults
+
+[Install]
+WantedBy=multi-user.target

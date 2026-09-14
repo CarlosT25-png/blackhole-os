@@ -1,0 +1,101 @@
+# Blackhole OS
+
+A living-room TV operating system for Raspberry Pi 4 Model B, Raspberry Pi 5,
+and generic x86_64 PCs. The image boots into Chromium with **uBlock Origin**,
+serving a Next.js kiosk shell (home, store, settings). Apps are Progressive Web
+Apps. System updates use **RAUC** A/B slots.
+
+## Architecture
+
+```
+Wayland kiosk compositor
+  └─ Chromium (--kiosk, uBlock Origin, kiosk-bridge)
+       ├─ Shell @ http://127.0.0.1  (nginx → Next.js static export)
+       └─ blackholed @ :8081       (apps, launch, RAUC)
+```
+
+Installed apps live on a persistent data partition so they survive OTA updates.
+
+## Repository layout
+
+| Path | Purpose |
+|------|---------|
+| `apps/shell` | Next.js 10-foot kiosk UI (`output: 'export'`) |
+| `services/blackholed` | Local Python API for apps and updates |
+| `catalog/apps.json` | Curated PWA store catalog |
+| `extensions/kiosk-bridge` | Chromium extension: Home/Back → shell |
+| `meta-blackhole` | Yocto distro, image, RAUC, systemd units |
+| `kas/` | Reproducible image builds |
+| `scripts/dev-kiosk.sh` | Desktop Chromium kiosk for daily development |
+
+## Desktop development (recommended daily loop)
+
+You do **not** need a Yocto build machine to work on the UI.
+
+```bash
+# Terminal 1 — API (Python 3 stdlib only; no pip needed)
+cd services/blackholed
+python3 blackholed.py
+
+# Terminal 2 — shell
+cd apps/shell
+npm install
+npm run dev
+
+# Terminal 3 — Chromium kiosk (optional)
+./scripts/dev-kiosk.sh
+```
+
+Open http://127.0.0.1:3000 for the shell. Arrow keys + Enter navigate; Escape
+returns focus to the shelf. The daemon stores apps under `./data/` by default.
+
+## Building images with Yocto (kas)
+
+Requirements: ~16 GB RAM, tens of GB disk, Docker or a Linux host with
+[kas](https://kas.readthedocs.io/). Chromium builds take hours.
+
+```bash
+# Raspberry Pi 4 Model B (64-bit)
+kas build kas/raspberrypi4-64.yml
+
+# Raspberry Pi 5
+kas build kas/raspberrypi5.yml
+
+# Generic x86_64 (PC / QEMU)
+kas build kas/genericx86-64.yml
+```
+
+Flash the resulting `.wic` / `.wic.bmap` with `bmaptool` or `dd`.
+
+### OTA with RAUC
+
+See **[docs/OTA.md](docs/OTA.md)** for the full flow (GitHub Releases and AWS S3).
+
+```bash
+# On the build host
+bitbake blackhole-bundle
+
+# Publish channel.json + .raucb to GitHub Releases or S3, then on the TV:
+# Settings → Updates → set channel URL → Check for updates → Install from channel
+```
+
+Short version: host a `channel.json` that points at your `.raucb`. The TV downloads
+it, `rauc install`s into the inactive slot, then reboot activates it.
+
+## Machines
+
+| MACHINE | Hardware |
+|---------|----------|
+| `raspberrypi4-64` | Raspberry Pi 4 Model B |
+| `raspberrypi5` | Raspberry Pi 5 |
+| `genericx86-64` | 64-bit PC / QEMU |
+
+Yocto release: **Scarthgap 5.0 LTS**.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
+## Code of Conduct
+
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

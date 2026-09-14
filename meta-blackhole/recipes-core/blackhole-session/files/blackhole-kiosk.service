@@ -1,0 +1,18 @@
+[Unit]
+Description=Blackhole Chromium kiosk
+After=weston.service nginx.service blackholed.service
+Requires=weston.service
+Wants=nginx.service blackholed.service
+
+[Service]
+Type=simple
+Environment=XDG_RUNTIME_DIR=/run/user/0
+Environment=WAYLAND_DISPLAY=wayland-1
+Environment=BLACKHOLE_SHELL_URL=http://127.0.0.1/
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/chromium-kiosk
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target

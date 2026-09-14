@@ -1,0 +1,13 @@
+header:
+  version: 14
+  includes:
+    - common.yml
+
+machine: genericx86-64
+
+local_conf_header:
+  blackhole-x86: |
+    WKS_FILE = "sdimage-dual-blackhole-x86.wks"
+    WKS_SEARCH_PATH:append = ":${TOPDIR}/../meta-blackhole/wic"
+    IMAGE_FSTYPES:append = " ext4"
+    EFI_PROVIDER = "grub-efi"

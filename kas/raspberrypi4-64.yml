@@ -1,0 +1,16 @@
+header:
+  version: 14
+  includes:
+    - common.yml
+
+machine: raspberrypi4-64
+
+local_conf_header:
+  blackhole-rpi4: |
+    ENABLE_UART = "1"
+    RPI_USE_U_BOOT = "1"
+    WKS_FILE = "sdimage-dual-blackhole-rpi.wks"
+    WKS_FILES:append = " ${TOPDIR}/../meta-blackhole/wic"
+    WKS_SEARCH_PATH:append = ":${TOPDIR}/../meta-blackhole/wic"
+    IMAGE_FSTYPES:append = " ext4"
+    MACHINE_FEATURES:append = " vc4graphics"

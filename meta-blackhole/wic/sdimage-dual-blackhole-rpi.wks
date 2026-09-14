@@ -1,0 +1,8 @@
+# Blackhole OS dual rootfs + data partition for Raspberry Pi (mmc)
+# p1: boot, p2: rootfs A, p3: rootfs B, p4: persistent data
+
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 128
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfs_a --align 4096 --size 4096
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfs_b --align 4096 --size 4096
+part /var/lib/blackhole --ondisk mmcblk0 --fstype=ext4 --label bhdata --align 4096 --size 1024
+bootloader --ptable msdos

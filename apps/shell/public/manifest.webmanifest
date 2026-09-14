@@ -1,0 +1,17 @@
+{
+  "name": "Blackhole",
+  "short_name": "Blackhole",
+  "description": "Blackhole OS TV shell",
+  "start_url": "/",
+  "display": "fullscreen",
+  "background_color": "#06070B",
+  "theme_color": "#06070B",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Blackhole Kiosk Bridge",
+  "version": "0.1.0",
+  "description": "Returns Chromium to the Blackhole shell on Home / Escape, and watches launch requests.",
+  "permissions": ["storage", "alarms", "tabs", "scripting"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Blackhole Kiosk Bridge"
+  }
+}

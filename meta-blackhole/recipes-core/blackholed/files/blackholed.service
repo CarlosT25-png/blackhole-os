@@ -1,0 +1,19 @@
+[Unit]
+Description=Blackhole OS local API
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+Environment=BLACKHOLE_DEV=0
+Environment=BLACKHOLE_DATA=/var/lib/blackhole
+Environment=BLACKHOLE_CATALOG=/etc/blackhole/catalog.json
+Environment=BLACKHOLE_SHELL_URL=http://127.0.0.1/
+Environment=BLACKHOLE_HOST=127.0.0.1
+Environment=BLACKHOLE_PORT=8081
+ExecStart=/usr/bin/python3 /usr/lib/blackhole/blackholed.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
