@@ -20,8 +20,33 @@ type View = "home" | "store" | "settings";
 type Toast = { message: string; kind?: "info" | "error" } | null;
 
 const STORE_PAGE_SIZE = 8;
-const HOLD_TO_MOVE_MS = 450;
 const DRAG_THRESHOLD_PX = 14;
+
+function ShiftIcon({ dir }: { dir: "left" | "right" }) {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      {dir === "left" ? (
+        <path
+          d="M14.5 6.5 9 12l5.5 5.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      ) : (
+        <path
+          d="M9.5 6.5 15 12l-5.5 5.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
+    </svg>
+  );
+}
 
 function moveApp(apps: AppRecord[], id: string, toIndex: number): AppRecord[] {
   const from = apps.findIndex((app) => app.id === id);
@@ -145,167 +170,149 @@ function AppTile({
 
 function HomeAppTile({
   app,
-  moving,
-  canMove,
+  index,
+  count,
+  arranging,
+  lifting,
   onLaunch,
-  onPickUp,
-  onDrop,
+  onToggleLift,
   onNudge,
   onDragTo,
   onDragEnd,
 }: {
   app: AppRecord;
-  moving: boolean;
-  canMove: boolean;
+  index: number;
+  count: number;
+  arranging: boolean;
+  lifting: boolean;
   onLaunch: () => void;
-  onPickUp: () => void;
-  onDrop: () => void;
+  onToggleLift: () => void;
   onNudge: (delta: number) => void;
   onDragTo: (clientX: number) => void;
   onDragEnd: () => void;
 }) {
-  const holdTimer = useRef<number | null>(null);
-  const armed = useRef(false);
-  const didHold = useRef(false);
   const dragging = useRef(false);
+  const ignoreClick = useRef(false);
   const pointerId = useRef<number | null>(null);
   const startX = useRef(0);
-  const movingRef = useRef(moving);
-  movingRef.current = moving;
-
-  const clearHold = () => {
-    if (holdTimer.current != null) {
-      window.clearTimeout(holdTimer.current);
-      holdTimer.current = null;
-    }
-  };
+  const arrangingRef = useRef(arranging);
+  const liftingRef = useRef(lifting);
+  arrangingRef.current = arranging;
+  liftingRef.current = lifting;
 
   const { ref, focused } = useFocusable({
     focusKey: `HOME_APP_${app.id}`,
     onEnterPress: () => {
-      if (movingRef.current) {
-        if (armed.current) onDrop();
-        return;
-      }
-      if (!canMove) return;
-      if (holdTimer.current != null) return;
-      didHold.current = false;
-      armed.current = false;
-      holdTimer.current = window.setTimeout(() => {
-        holdTimer.current = null;
-        didHold.current = true;
-        armed.current = false;
-        onPickUp();
-      }, HOLD_TO_MOVE_MS);
-    },
-    onEnterRelease: () => {
-      const held = didHold.current;
-      clearHold();
-      if (movingRef.current) {
-        armed.current = true;
-        return;
-      }
-      if (!held) onLaunch();
+      ignoreClick.current = true;
+      window.setTimeout(() => {
+        ignoreClick.current = false;
+      }, 280);
+      if (arrangingRef.current) onToggleLift();
+      else onLaunch();
     },
     onArrowPress: (direction) => {
-      if (!movingRef.current) return true;
+      if (!arrangingRef.current || !liftingRef.current) return true;
       if (direction === "left") onNudge(-1);
       if (direction === "right") onNudge(1);
       return false;
     },
-    onBlur: () => {
-      if (!movingRef.current) clearHold();
-    },
   });
 
+  const showShift = arranging && lifting;
+  const canShiftLeft = index > 0;
+  const canShiftRight = index < count - 1;
+
   return (
-    <button
-      ref={ref as never}
-      className="tile"
-      type="button"
-      data-focused={focused ? "true" : "false"}
-      data-moving={moving ? "true" : "false"}
-      data-app-id={app.id}
-      aria-grabbed={moving}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        pointerId.current = event.pointerId;
-        startX.current = event.clientX;
-        dragging.current = false;
-        didHold.current = movingRef.current;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        if (movingRef.current || !canMove) return;
-        holdTimer.current = window.setTimeout(() => {
-          holdTimer.current = null;
-          didHold.current = true;
-          armed.current = false;
-          onPickUp();
-        }, HOLD_TO_MOVE_MS);
-      }}
-      onPointerMove={(event) => {
-        if (pointerId.current !== event.pointerId || !canMove) return;
-        const dx = event.clientX - startX.current;
-        if (!dragging.current && Math.abs(dx) > DRAG_THRESHOLD_PX) {
-          dragging.current = true;
-          didHold.current = true;
-          clearHold();
-          onPickUp();
-        }
-        if (dragging.current) onDragTo(event.clientX);
-      }}
-      onPointerUp={(event) => {
-        if (pointerId.current !== event.pointerId) return;
-        pointerId.current = null;
-        const wasDragging = dragging.current;
-        const held = didHold.current;
-        dragging.current = false;
-        clearHold();
-        if (wasDragging) {
-          const suppress = (clickEvent: Event) => {
-            clickEvent.preventDefault();
-            clickEvent.stopPropagation();
-          };
-          window.addEventListener("click", suppress, true);
-          window.setTimeout(() => window.removeEventListener("click", suppress, true), 400);
-          onDragEnd();
-          return;
-        }
-        if (movingRef.current) {
-          if (held) {
-            armed.current = true;
-            return;
+    <div className="shelf-item" data-lifting={lifting ? "true" : "false"}>
+      {showShift && canShiftLeft ? (
+        <button
+          type="button"
+          className="tile-shift tile-shift-left"
+          tabIndex={-1}
+          aria-label={`Move ${app.name} left`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onNudge(-1);
+          }}
+        >
+          <ShiftIcon dir="left" />
+        </button>
+      ) : null}
+      <button
+        ref={ref as never}
+        className="tile"
+        type="button"
+        data-focused={focused ? "true" : "false"}
+        data-moving={lifting ? "true" : "false"}
+        data-app-id={app.id}
+        aria-grabbed={lifting}
+        onClick={() => {
+          if (ignoreClick.current) return;
+          if (arrangingRef.current) onToggleLift();
+          else onLaunch();
+        }}
+        onPointerDown={(event) => {
+          if (!arrangingRef.current || event.button !== 0) return;
+          pointerId.current = event.pointerId;
+          startX.current = event.clientX;
+          dragging.current = false;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!arrangingRef.current || pointerId.current !== event.pointerId) return;
+          const dx = event.clientX - startX.current;
+          if (!dragging.current && Math.abs(dx) > DRAG_THRESHOLD_PX) {
+            dragging.current = true;
+            if (!liftingRef.current) onToggleLift();
           }
-          onDrop();
-          return;
-        }
-        if (!held) onLaunch();
-      }}
-      onPointerCancel={() => {
-        pointerId.current = null;
-        dragging.current = false;
-        clearHold();
-      }}
-    >
-      <div className="tile-face">
-        {canMove ? (
-          <span className="tile-grip" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
-        ) : null}
-        {app.icon ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={app.icon} alt="" draggable={false} />
-        ) : (
-          <span className="tile-glyph">{app.name.slice(0, 1)}</span>
-        )}
-      </div>
-      <span className="tile-label">{app.name}</span>
-    </button>
+          if (dragging.current) onDragTo(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          if (pointerId.current !== event.pointerId) return;
+          pointerId.current = null;
+          const wasDragging = dragging.current;
+          dragging.current = false;
+          if (wasDragging) {
+            const suppress = (clickEvent: Event) => {
+              clickEvent.preventDefault();
+              clickEvent.stopPropagation();
+            };
+            window.addEventListener("click", suppress, true);
+            window.setTimeout(() => window.removeEventListener("click", suppress, true), 400);
+            onDragEnd();
+          }
+        }}
+        onPointerCancel={() => {
+          pointerId.current = null;
+          dragging.current = false;
+        }}
+      >
+        <div className="tile-face">
+          {arranging ? <span className="tile-index">{index + 1}</span> : null}
+          {app.icon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={app.icon} alt="" draggable={false} />
+          ) : (
+            <span className="tile-glyph">{app.name.slice(0, 1)}</span>
+          )}
+        </div>
+        <span className="tile-label">{app.name}</span>
+      </button>
+      {showShift && canShiftRight ? (
+        <button
+          type="button"
+          className="tile-shift tile-shift-right"
+          tabIndex={-1}
+          aria-label={`Move ${app.name} right`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onNudge(1);
+          }}
+        >
+          <ShiftIcon dir="right" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -399,6 +406,8 @@ function SideloadDialog({
     </FocusContext.Provider>
   );
 }
+
+export default function Shell() {
   const [view, setView] = useState<View>("home");
   const [installed, setInstalled] = useState<AppRecord[]>([]);
   const [catalog, setCatalog] = useState<AppRecord[]>([]);
@@ -411,13 +420,14 @@ function SideloadDialog({
   const [toast, setToast] = useState<Toast>(null);
   const [loading, setLoading] = useState(true);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [arranging, setArranging] = useState(false);
   const shelfRef = useRef<HTMLDivElement>(null);
   const installedRef = useRef<AppRecord[]>([]);
   const snapshotRef = useRef<AppRecord[] | null>(null);
-  const movingIdRef = useRef<string | null>(null);
+  const arrangingRef = useRef(false);
   const sideloadOpenRef = useRef(false);
   installedRef.current = installed;
-  movingIdRef.current = movingId;
+  arrangingRef.current = arranging;
   sideloadOpenRef.current = sideloadOpen;
 
   const { ref, focusKey } = useFocusable({
@@ -500,41 +510,47 @@ function SideloadDialog({
 
   const go = (next: View) => setView(next);
 
-  const pickUpApp = useCallback((id: string) => {
+  const startArrange = useCallback(() => {
     if (installedRef.current.length < 2) return;
-    if (!snapshotRef.current) {
-      snapshotRef.current = installedRef.current;
-    }
-    setMovingId(id);
-    window.setTimeout(() => setFocus(`HOME_APP_${id}`), 0);
+    snapshotRef.current = installedRef.current;
+    setArranging(true);
+    setMovingId(null);
+    const first = installedRef.current[0];
+    window.setTimeout(() => {
+      if (first) setFocus(`HOME_APP_${first.id}`);
+    }, 40);
   }, []);
 
-  const commitMove = useCallback(async () => {
-    const ids = installedRef.current.map((app) => app.id);
-    const original = snapshotRef.current?.map((app) => app.id) ?? ids;
-    snapshotRef.current = null;
-    setMovingId(null);
-    if (ids.join("\0") === original.join("\0")) return;
-    try {
-      const res = await api.reorder(ids);
-      setInstalled(res.apps);
-    } catch (err) {
-      const previous = original
-        .map((id) => installedRef.current.find((app) => app.id === id))
-        .filter((app): app is AppRecord => Boolean(app));
-      if (previous.length === original.length) setInstalled(previous);
-      showToast(err instanceof Error ? err.message : "Could not save order", "error");
-    }
-  }, [showToast]);
+  const finishArrange = useCallback(
+    async (save: boolean) => {
+      const ids = installedRef.current.map((app) => app.id);
+      const original = snapshotRef.current?.map((app) => app.id) ?? ids;
+      const previous = snapshotRef.current;
+      snapshotRef.current = null;
+      setMovingId(null);
+      setArranging(false);
+      if (!save) {
+        if (previous) setInstalled(previous);
+        return;
+      }
+      if (ids.join("\0") === original.join("\0")) return;
+      try {
+        const res = await api.reorder(ids);
+        setInstalled(res.apps);
+      } catch (err) {
+        if (previous) setInstalled(previous);
+        showToast(err instanceof Error ? err.message : "Could not save order", "error");
+      }
+    },
+    [showToast],
+  );
 
-  const cancelMove = useCallback(() => {
-    const previous = snapshotRef.current;
-    snapshotRef.current = null;
-    if (previous) setInstalled(previous);
-    setMovingId(null);
+  const toggleLift = useCallback((id: string) => {
+    setMovingId((current) => (current === id ? null : id));
   }, []);
 
   const nudgeApp = useCallback((id: string, delta: number) => {
+    setMovingId(id);
     setInstalled((prev) => {
       const from = prev.findIndex((app) => app.id === id);
       if (from < 0) return prev;
@@ -559,9 +575,9 @@ function SideloadDialog({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (movingIdRef.current) {
+      if (arrangingRef.current) {
         event.preventDefault();
-        cancelMove();
+        void finishArrange(false);
         return;
       }
       if (sideloadOpenRef.current) {
@@ -571,22 +587,31 @@ function SideloadDialog({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cancelMove, closeSideload]);
+  }, [closeSideload, finishArrange]);
 
   useEffect(() => {
     if (view !== "store") setSideloadOpen(false);
   }, [view]);
 
   useEffect(() => {
-    if (view !== "home" && movingIdRef.current) {
-      void commitMove();
+    if (view !== "home" && arrangingRef.current) {
+      void finishArrange(true);
     }
-  }, [view, commitMove]);
+  }, [view, finishArrange]);
 
   const launch = async (id: string) => {
     try {
       const res = await api.launch(id);
       showToast(`Opening ${res.url}`);
+      // Ask the kiosk-bridge extension (when loaded) to navigate the tab.
+      window.postMessage(
+        { source: "blackhole-shell", type: "navigate", url: res.url },
+        "*",
+      );
+      // Always navigate this window — works in plain browser and in kiosk.
+      window.setTimeout(() => {
+        window.location.assign(res.url);
+      }, 80);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Launch failed", "error");
     }
@@ -659,54 +684,99 @@ function SideloadDialog({
         </nav>
 
         {view === "home" && (
-          <section>
-            <h2 className="view-title">Your apps</h2>
-            <p className="view-lede">
-              {loading
-                ? "Loading…"
-                : installed.length === 0
-                  ? "Install an app from the store."
-                  : movingId
-                    ? "Move left or right, then press OK to place. Esc cancels."
-                    : installed.length > 1
-                      ? "Open an app, or hold OK and move it to rearrange."
-                      : "Open an app, or move to the store at the end of the shelf."}
-            </p>
+          <section className="home-view">
+            <div className="home-head">
+              <div>
+                <h2 className="view-title">{arranging ? "Rearrange" : "Your apps"}</h2>
+                <p className="view-lede">
+                  {loading
+                    ? "Loading…"
+                    : installed.length === 0
+                      ? "Install an app from the store."
+                      : arranging
+                        ? movingId
+                          ? "Slide with left and right, then press OK. Done saves."
+                          : "Focus an app, press OK, then slide it into place."
+                        : installed.length > 1
+                          ? "Open an app, or arrange the shelf."
+                          : "Open an app, or move to the store at the end of the shelf."}
+                </p>
+              </div>
+              {installed.length > 1 ? (
+                <div className="home-actions">
+                  {arranging ? (
+                    <>
+                      <Focusable
+                        focusKey="HOME_ARRANGE_CANCEL"
+                        className="ghost-btn"
+                        onEnterPress={() => {
+                          void finishArrange(false);
+                          window.setTimeout(() => setFocus("HOME_ARRANGE"), 40);
+                        }}
+                      >
+                        Cancel
+                      </Focusable>
+                      <Focusable
+                        focusKey="HOME_ARRANGE_DONE"
+                        className="primary-btn home-done"
+                        onEnterPress={() => {
+                          void finishArrange(true);
+                          window.setTimeout(() => setFocus("HOME_ARRANGE"), 40);
+                        }}
+                      >
+                        Done
+                      </Focusable>
+                    </>
+                  ) : (
+                    <Focusable
+                      focusKey="HOME_ARRANGE"
+                      className="ghost-btn"
+                      onEnterPress={startArrange}
+                    >
+                      Arrange
+                    </Focusable>
+                  )}
+                </div>
+              ) : null}
+            </div>
             <div
               className="shelf"
               role="list"
               ref={shelfRef}
-              data-arranging={movingId ? "true" : "false"}
+              data-arranging={arranging ? "true" : "false"}
             >
-              {installed.map((app) => (
+              {installed.map((app, index) => (
                 <div key={app.id} role="listitem">
                   <HomeAppTile
                     app={app}
-                    moving={movingId === app.id}
-                    canMove={installed.length > 1}
+                    index={index}
+                    count={installed.length}
+                    arranging={arranging}
+                    lifting={movingId === app.id}
                     onLaunch={() => void launch(app.id)}
-                    onPickUp={() => pickUpApp(app.id)}
-                    onDrop={() => void commitMove()}
+                    onToggleLift={() => toggleLift(app.id)}
                     onNudge={(delta) => nudgeApp(app.id, delta)}
                     onDragTo={(clientX) => dragAppTo(app.id, clientX)}
-                    onDragEnd={() => void commitMove()}
+                    onDragEnd={() => undefined}
                   />
                 </div>
               ))}
-              <div role="listitem">
-                <AppTile
-                  store
-                  app={{
-                    id: "store",
-                    name: "Store",
-                    startUrl: "#store",
-                    icon: null,
-                  }}
-                  focusKey="HOME_STORE"
-                  onOpen={() => go("store")}
-                  onFocus={() => undefined}
-                />
-              </div>
+              {arranging ? null : (
+                <div role="listitem">
+                  <AppTile
+                    store
+                    app={{
+                      id: "store",
+                      name: "Store",
+                      startUrl: "#store",
+                      icon: null,
+                    }}
+                    focusKey="HOME_STORE"
+                    onOpen={() => go("store")}
+                    onFocus={() => undefined}
+                  />
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -814,10 +884,15 @@ function SideloadDialog({
                           )}
                         </div>
                         <div className="catalog-card-body">
+                          {app.category ? (
+                            <span className="catalog-card-category">{app.category}</span>
+                          ) : null}
                           <strong>{app.name}</strong>
                           {app.description ? <span>{app.description}</span> : null}
                         </div>
-                        <span className="row-action">{isInstalled ? "Remove" : "Install"}</span>
+                        <span className="catalog-card-action">
+                          {isInstalled ? "Remove" : "Install"}
+                        </span>
                       </Focusable>
                     );
                   })}

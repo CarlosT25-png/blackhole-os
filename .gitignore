@@ -37,4 +37,5 @@ tmp/
 # Chromium / extensions
 extensions/ublock/
 scripts/.chromium-profile/
+scripts/chrome-for-testing/
 *.crx

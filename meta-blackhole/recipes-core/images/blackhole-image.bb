@@ -23,7 +23,19 @@ IMAGE_INSTALL += " \
     blackhole-session \
     blackhole-extensions \
     rauc \
-    ${@bb.utils.contains('DISTRO_FEATURES', 'wifi', 'wpa-supplicant', '', d)} \
+    networkmanager \
+    networkmanager-nmcli \
+    bluez5 \
+"
+
+# Raspberry Pi onboard CYW43xx Wi-Fi / Bluetooth (UART attach + firmware).
+IMAGE_INSTALL:append:rpi = " \
+    pi-bluetooth \
+    linux-firmware-rpidistro-bcm43430 \
+    linux-firmware-rpidistro-bcm43455 \
+    linux-firmware-rpidistro-bcm43436 \
+    linux-firmware-rpidistro-bcm43436s \
+    linux-firmware-rpidistro-bcm43456 \
 "
 
 # Persist app data and Chromium profile on the data partition.

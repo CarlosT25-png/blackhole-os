@@ -1,13 +1,14 @@
 [Unit]
 Description=Blackhole OS local API
-After=network.target
-Wants=network.target
+After=network.target NetworkManager.service bluetooth.service
+Wants=network.target NetworkManager.service bluetooth.service
 
 [Service]
 Type=simple
 Environment=BLACKHOLE_DEV=0
 Environment=BLACKHOLE_DATA=/var/lib/blackhole
 Environment=BLACKHOLE_CATALOG=/etc/blackhole/catalog.json
+Environment=BLACKHOLE_CATALOG_URL=http://127.0.0.1/catalog/apps.json
 Environment=BLACKHOLE_SHELL_URL=http://127.0.0.1/
 Environment=BLACKHOLE_HOST=127.0.0.1
 Environment=BLACKHOLE_PORT=8081

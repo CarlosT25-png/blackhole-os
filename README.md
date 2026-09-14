@@ -1,7 +1,7 @@
 # Blackhole OS
 
 A living-room TV operating system for Raspberry Pi 4 Model B, Raspberry Pi 5,
-and generic x86_64 PCs. The image boots into Chromium with **uBlock Origin**,
+and generic x86_64 PCs. The image boots into Chromium with **uBlock Origin Lite**,
 serving a Next.js kiosk shell (home, store, settings). Apps are Progressive Web
 Apps. System updates use **RAUC** A/B slots.
 
@@ -9,30 +9,57 @@ Apps. System updates use **RAUC** A/B slots.
 
 ```
 Wayland kiosk compositor
-  └─ Chromium (--kiosk, uBlock Origin, kiosk-bridge)
+  └─ Chromium (--kiosk, uBlock Origin Lite, kiosk-bridge)
        ├─ Shell @ http://127.0.0.1  (nginx → Next.js static export)
        └─ blackholed @ :8081       (apps, launch, RAUC)
 ```
 
 Installed apps live on a persistent data partition so they survive OTA updates.
+The store catalog is hosted with the Next.js shell and cached locally for offline use.
 
 ## Repository layout
 
 | Path | Purpose |
 |------|---------|
 | `apps/shell` | Next.js 10-foot kiosk UI (`output: 'export'`) |
+| `apps/shell/public/catalog/apps.json` | Store catalog served by the hosted shell |
 | `services/blackholed` | Local Python API for apps and updates |
-| `catalog/apps.json` | Curated PWA store catalog |
+| `catalog/apps.json` | Canonical curated PWA store catalog |
 | `extensions/kiosk-bridge` | Chromium extension: Home/Back → shell |
 | `meta-blackhole` | Yocto distro, image, RAUC, systemd units |
 | `kas/` | Reproducible image builds |
 | `scripts/dev-kiosk.sh` | Desktop Chromium kiosk for daily development |
+| `scripts/sync-catalog.sh` | Copy catalog into shell public + Yocto recipe |
+
+## App store catalog (online + offline)
+
+Edit **`catalog/apps.json`**, then sync and deploy the shell:
+
+```bash
+./scripts/sync-catalog.sh
+# develop / host apps/shell — catalog is at /catalog/apps.json
+```
+
+`blackholed` keeps a local offline copy at `data/catalog.json` (on device:
+`/var/lib/blackhole/catalog.json`). On startup and each `GET /catalog` it fetches
+`catalogUrl`, compares a content hash, and updates the local file only when the
+remote list differs. Offline Store + installs use the local cache.
+
+Default `catalogUrl` is `http://127.0.0.1:3000/catalog/apps.json` in desktop
+dev, and `http://127.0.0.1/catalog/apps.json` on the image. Change it under
+**Settings → Updates**, or set `BLACKHOLE_CATALOG_URL`.
+
+Installed apps remain separate in `data/apps.json` and are not overwritten by
+catalog sync.
 
 ## Desktop development (recommended daily loop)
 
 You do **not** need a Yocto build machine to work on the UI.
 
 ```bash
+# Keep public catalog in sync after editing catalog/apps.json
+./scripts/sync-catalog.sh
+
 # Terminal 1 — API (Python 3 stdlib only; no pip needed)
 cd services/blackholed
 python3 blackholed.py
@@ -46,8 +73,12 @@ npm run dev
 ./scripts/dev-kiosk.sh
 ```
 
-Open http://127.0.0.1:3000 for the shell. Arrow keys + Enter navigate; Escape
-returns focus to the shelf. The daemon stores apps under `./data/` by default.
+Open http://127.0.0.1:3000 for the shell. Arrow keys + Enter navigate.
+
+`./scripts/dev-kiosk.sh` uses **Chrome for Testing** (not branded Google Chrome),
+because Chrome 137+ ignores `--load-extension`. On first run it may download
+that browser. In the kiosk, Esc / the top-right **Blackhole** chip return home;
+confirm extensions at `chrome://extensions`.
 
 ## Building images with Yocto (kas)
 

@@ -1,0 +1,236 @@
+[
+  {
+    "id": "netflix",
+    "name": "Netflix",
+    "description": "Movies, series, and Netflix originals.",
+    "manifestUrl": "https://www.netflix.com/manifest.json",
+    "startUrl": "https://www.netflix.com/",
+    "icon": "https://assets.nflxext.com/us/ffe/siteui/common/icons/nficon2016.png",
+    "category": "video"
+  },
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "description": "Watch videos and live streams.",
+    "manifestUrl": "https://www.youtube.com/manifest.json",
+    "startUrl": "https://www.youtube.com/tv",
+    "icon": "https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png",
+    "category": "video"
+  },
+  {
+    "id": "primevideo",
+    "name": "Prime Video",
+    "description": "Amazon originals, movies, and live sports.",
+    "manifestUrl": "https://www.primevideo.com/manifest.json",
+    "startUrl": "https://www.primevideo.com/",
+    "icon": "https://m.media-amazon.com/images/G/01/digital/video/DVUI/favicons/favicon-196x196.png",
+    "category": "video"
+  },
+  {
+    "id": "disneyplus",
+    "name": "Disney+",
+    "description": "Disney, Pixar, Marvel, Star Wars, and National Geographic.",
+    "manifestUrl": "https://www.disneyplus.com/manifest.json",
+    "startUrl": "https://www.disneyplus.com/",
+    "icon": "https://static-assets.bamgrid.com/product/disneyplus/favicons/msftpwa-192x192-aurora.97f08a1eb58995c81687d0cf3f953796.png",
+    "category": "video"
+  },
+  {
+    "id": "hulu",
+    "name": "Hulu",
+    "description": "Stream TV, movies, and live channels.",
+    "manifestUrl": "https://www.hulu.com/manifest.json",
+    "startUrl": "https://www.hulu.com/",
+    "icon": "https://www.hulu.com/static/icons/apple-touch-icon.png",
+    "category": "video"
+  },
+  {
+    "id": "hbomax",
+    "name": "HBO Max",
+    "description": "HBO series, Max originals, and blockbuster movies.",
+    "manifestUrl": "https://www.hbomax.com/manifest.json",
+    "startUrl": "https://www.hbomax.com/",
+    "icon": "https://www.hbomax.com/dotcom/img/hbomax/apple-touch-icon.png",
+    "category": "video"
+  },
+  {
+    "id": "peacock",
+    "name": "Peacock",
+    "description": "NBC originals, movies, news, and sports.",
+    "manifestUrl": "https://www.peacocktv.com/manifest.json",
+    "startUrl": "https://www.peacocktv.com/watch/home",
+    "icon": "https://www.peacocktv.com/static/peacock-toolkit/53.2.1/peacock/favicons/apple-touch-icon_180x180.png",
+    "category": "video"
+  },
+  {
+    "id": "paramountplus",
+    "name": "Paramount+",
+    "description": "CBS, Paramount movies, and live sports.",
+    "manifestUrl": "https://www.paramountplus.com/manifest.json",
+    "startUrl": "https://www.paramountplus.com/",
+    "icon": "https://www.paramountplus.com/assets/images/paramount-plus-app-store-logo-192.png",
+    "category": "video"
+  },
+  {
+    "id": "appletv",
+    "name": "Apple TV+",
+    "description": "Apple Originals and the Apple TV catalog.",
+    "manifestUrl": "https://tv.apple.com/manifest.json",
+    "startUrl": "https://tv.apple.com/",
+    "icon": "https://tv.apple.com/assets/app-icons/pwa-manifest/tv-icon_192.png",
+    "category": "video"
+  },
+  {
+    "id": "youtubetv",
+    "name": "YouTube TV",
+    "description": "Live TV, sports, and DVR in the browser.",
+    "manifestUrl": "https://tv.youtube.com/manifest.json",
+    "startUrl": "https://tv.youtube.com/",
+    "icon": "https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png",
+    "category": "video"
+  },
+  {
+    "id": "tubi",
+    "name": "Tubi",
+    "description": "Free movies and TV with ads.",
+    "manifestUrl": "https://tubitv.com/manifest.json",
+    "startUrl": "https://tubitv.com/",
+    "icon": "https://mcdn.tubitv.com/web/repaint/android-chrome-192x192.png",
+    "category": "video"
+  },
+  {
+    "id": "vix",
+    "name": "ViX",
+    "description": "Free Spanish-language movies, novelas, and live TV.",
+    "manifestUrl": "https://www.vix.com/manifest.json",
+    "startUrl": "https://www.vix.com/",
+    "icon": "https://www.vix.com/assets/externals/icons/apple-touch-icon-192x192.png",
+    "category": "video"
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "description": "Music and podcasts for the living room.",
+    "manifestUrl": "https://open.spotify.com/manifest.json",
+    "startUrl": "https://open.spotify.com/",
+    "icon": "https://open.spotifycdn.com/cdn/images/favicon32.b64ecc03.png",
+    "category": "music"
+  },
+  {
+    "id": "twitch",
+    "name": "Twitch",
+    "description": "Live streaming for gamers and creators.",
+    "manifestUrl": "https://www.twitch.tv/manifest.json",
+    "startUrl": "https://www.twitch.tv/",
+    "icon": "https://assets.twitch.tv/assets/favicon-32-e29e246c157142c94346.png",
+    "category": "video"
+  },
+  {
+    "id": "crunchyroll",
+    "name": "Crunchyroll",
+    "description": "Anime series and movies.",
+    "manifestUrl": "https://www.crunchyroll.com/manifest.json",
+    "startUrl": "https://www.crunchyroll.com/",
+    "icon": "https://static.crunchyroll.com/cxweb/assets/img/favicons/favicon-32x32.png",
+    "category": "video"
+  },
+  {
+    "id": "plutotv",
+    "name": "Pluto TV",
+    "description": "Free live TV channels and on-demand.",
+    "manifestUrl": "https://pluto.tv/api/manifest/",
+    "startUrl": "https://pluto.tv/",
+    "icon": "https://pluto.tv/favicon/og_logo.png",
+    "category": "video"
+  },
+  {
+    "id": "rokuchannel",
+    "name": "Roku Channel",
+    "description": "Free live TV, movies, and Roku originals.",
+    "manifestUrl": "https://therokuchannel.roku.com/manifest.json",
+    "startUrl": "https://therokuchannel.roku.com/",
+    "icon": "https://www.roku.com/assets/roku-logo-purple.png",
+    "category": "video"
+  },
+  {
+    "id": "xumoplay",
+    "name": "Xumo Play",
+    "description": "Free live channels and on-demand streaming.",
+    "manifestUrl": "https://play.xumo.com/manifest.json",
+    "startUrl": "https://play.xumo.com/",
+    "icon": "https://play.xumo.com/favicons/favicon-196x196.png",
+    "category": "video"
+  },
+  {
+    "id": "plex",
+    "name": "Plex",
+    "description": "Stream your personal media library.",
+    "manifestUrl": "https://app.plex.tv/desktop/manifest.json",
+    "startUrl": "https://app.plex.tv/desktop",
+    "icon": "https://www.plex.tv/wp-content/themes/plex/assets/img/favicons/plex-192.png",
+    "category": "video"
+  },
+  {
+    "id": "discoveryplus",
+    "name": "discovery+",
+    "description": "Real-life TV, docs, and Discovery originals.",
+    "manifestUrl": "https://www.discoveryplus.com/manifest.json",
+    "startUrl": "https://www.discoveryplus.com/",
+    "icon": "https://www.discoveryplus.com/dotcom/img/dplus/apple-touch-icon.png",
+    "category": "video"
+  },
+  {
+    "id": "starz",
+    "name": "STARZ",
+    "description": "Original series and hit movies.",
+    "manifestUrl": "https://www.starz.com/manifest.json",
+    "startUrl": "https://www.starz.com/",
+    "icon": "https://www.starz.com/assets/starz/pwa-icons/starz-white-logo-512x512.png",
+    "category": "video"
+  },
+  {
+    "id": "univision",
+    "name": "Univision",
+    "description": "Spanish-language shows, news, and sports.",
+    "manifestUrl": "https://www.univision.com/manifest.webmanifest",
+    "startUrl": "https://www.univision.com/",
+    "icon": "https://st1.uvnimg.com/cf/32/45eb81dd4e09be0d422c540aa86f/wep-push-noticias-2026.png",
+    "category": "video"
+  },
+  {
+    "id": "viki",
+    "name": "Rakuten Viki",
+    "description": "K-dramas, C-dramas, and Asian series.",
+    "manifestUrl": "https://www.viki.com/manifest.json",
+    "startUrl": "https://www.viki.com/",
+    "icon": "https://1.viki.io/a/vwk8s-svelte/_app/immutable/assets/apple-touch-icon-192x192.DaKB6Rfm.png",
+    "category": "video"
+  },
+  {
+    "id": "fandangoathome",
+    "name": "Fandango at Home",
+    "description": "Rent or buy movies and TV (formerly Vudu).",
+    "manifestUrl": "https://www.fandangoathome.com/images/favicons/site.webmanifest?v=5",
+    "startUrl": "https://www.fandangoathome.com/",
+    "icon": "https://www.fandangoathome.com/images/favicons/apple-touch-icon.png?v=3",
+    "category": "video"
+  },
+  {
+    "id": "wikipedia",
+    "name": "Wikipedia",
+    "description": "The free encyclopedia.",
+    "manifestUrl": "https://en.wikipedia.org/static/manifest.webmanifest",
+    "startUrl": "https://en.wikipedia.org/wiki/Main_Page",
+    "icon": "https://en.wikipedia.org/static/apple-touch/wikipedia.png",
+    "category": "reference"
+  },
+  {
+    "id": "archive",
+    "name": "Internet Archive",
+    "description": "Books, video, audio, and software.",
+    "manifestUrl": "https://archive.org/offshoot_assets/manifest.json",
+    "startUrl": "https://archive.org/",
+    "icon": "https://archive.org/images/glogo.png",
+    "category": "reference"
+  }
+]

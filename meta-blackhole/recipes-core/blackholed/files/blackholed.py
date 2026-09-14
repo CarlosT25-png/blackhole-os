@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,7 +21,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA = Path(os.environ.get("BLACKHOLE_DATA", ROOT / "data"))
-CATALOG_PATH = Path(
+BUNDLED_CATALOG = Path(
     os.environ.get("BLACKHOLE_CATALOG", ROOT / "catalog" / "apps.json")
 )
 SHELL_URL = os.environ.get("BLACKHOLE_SHELL_URL", "http://127.0.0.1:3000")
@@ -29,6 +30,14 @@ DEFAULT_CHANNEL = os.environ.get(
     "https://github.com/example/blackhole-os/releases/latest/download/channel.json",
 )
 DEV_MODE = os.environ.get("BLACKHOLE_DEV", "1") == "1"
+DEFAULT_CATALOG_URL = os.environ.get(
+    "BLACKHOLE_CATALOG_URL",
+    (
+        "http://127.0.0.1:3000/catalog/apps.json"
+        if DEV_MODE
+        else "http://127.0.0.1/catalog/apps.json"
+    ),
+)
 HOST = os.environ.get("BLACKHOLE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BLACKHOLE_PORT", "8081"))
 VERSION = os.environ.get("BLACKHOLE_VERSION", "0.1.0-dev")
@@ -36,6 +45,7 @@ MACHINE = os.environ.get("BLACKHOLE_MACHINE", "desktop")
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "channelUrl": DEFAULT_CHANNEL,
+    "catalogUrl": DEFAULT_CATALOG_URL,
     "display": {
         "scale": 100,
         "reducedMotion": False,
@@ -56,6 +66,10 @@ def data_dir() -> Path:
 
 def apps_file() -> Path:
     return data_dir() / "apps.json"
+
+
+def catalog_cache_file() -> Path:
+    return data_dir() / "catalog.json"
 
 
 def launch_file() -> Path:
@@ -127,9 +141,86 @@ def reorder_apps(ids: Any) -> list[dict[str, Any]]:
     return ordered
 
 
-def load_catalog() -> list[dict[str, Any]]:
-    apps = load_json(CATALOG_PATH, [])
-    return apps if isinstance(apps, list) else []
+def catalog_hash(apps: list[dict[str, Any]]) -> str:
+    canonical = json.dumps(apps, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def normalize_catalog_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        payload = payload.get("apps", [])
+    if not isinstance(payload, list):
+        raise ValueError("Catalog must be a JSON array or {\"apps\": [...]}")
+    apps: list[dict[str, Any]] = []
+    for item in payload:
+        if isinstance(item, dict) and item.get("id") and item.get("name") and item.get("startUrl"):
+            apps.append(item)
+    return apps
+
+
+def read_catalog_list(path: Path) -> list[dict[str, Any]]:
+    raw = load_json(path, [])
+    try:
+        return normalize_catalog_payload(raw)
+    except ValueError:
+        return []
+
+
+def ensure_catalog_cache() -> list[dict[str, Any]]:
+    cache = catalog_cache_file()
+    if cache.exists():
+        cached = read_catalog_list(cache)
+        if cached:
+            return cached
+    seeded = read_catalog_list(BUNDLED_CATALOG)
+    if seeded:
+        save_json(cache, seeded)
+    return seeded
+
+
+def fetch_catalog_payload(url: str, timeout: float = 8.0) -> list[dict[str, Any]]:
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "blackholed/0.1"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Could not fetch catalog: {exc}") from exc
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Catalog response is not JSON") from exc
+    return normalize_catalog_payload(payload)
+
+
+def sync_catalog_from_remote(catalog_url: str | None = None) -> list[dict[str, Any]]:
+    """Refresh data/catalog.json from catalogUrl when the remote list differs."""
+    local = ensure_catalog_cache()
+    settings = load_settings()
+    url = (catalog_url or str(settings.get("catalogUrl") or DEFAULT_CATALOG_URL)).strip()
+    if not url:
+        return local
+    try:
+        remote = fetch_catalog_payload(url)
+    except ValueError:
+        return local
+    if not remote:
+        return local
+    if catalog_hash(remote) != catalog_hash(local):
+        save_json(catalog_cache_file(), remote)
+        if url != settings.get("catalogUrl"):
+            settings["catalogUrl"] = url
+            save_settings(settings)
+        return remote
+    return local
+
+
+def load_catalog(sync: bool = True) -> list[dict[str, Any]]:
+    if sync:
+        return sync_catalog_from_remote()
+    return ensure_catalog_cache()
 
 
 def slugify(value: str) -> str:
@@ -293,22 +384,102 @@ def download_bundle(url: str) -> Path:
     return dest
 
 
+def _nmcli_fields(line: str) -> list[str]:
+    """Split nmcli terse output, unescaping backslash-escaped colons."""
+    parts: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in line:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == ":":
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _run_cmd(args: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def mock_wifi_networks(settings: dict[str, Any]) -> list[dict[str, Any]]:
+    saved = str(settings.get("network", {}).get("ssid") or "")
+    networks: list[dict[str, Any]] = [
+        {"ssid": "TestNet", "signal": "80", "security": "WPA2", "bssid": "aa:bb:cc:dd:ee:01"},
+        {"ssid": "CoffeeShop", "signal": "65", "security": "WPA2", "bssid": "aa:bb:cc:dd:ee:02"},
+        {"ssid": "OpenLab", "signal": "42", "security": "", "bssid": "aa:bb:cc:dd:ee:03"},
+    ]
+    if saved and saved not in {item["ssid"] for item in networks}:
+        networks.insert(
+            0,
+            {
+                "ssid": saved,
+                "signal": "80",
+                "security": "WPA2",
+                "bssid": "aa:bb:cc:dd:ee:00",
+            },
+        )
+    for item in networks:
+        item["inUse"] = bool(saved) and item["ssid"] == saved
+    networks.sort(key=lambda item: (not item["inUse"], -int(item["signal"])))
+    return networks
+
+
+def parse_wifi_list(stdout: str) -> list[dict[str, Any]]:
+    best: dict[str, dict[str, Any]] = {}
+    for line in stdout.splitlines():
+        parts = _nmcli_fields(line)
+        if len(parts) < 5:
+            continue
+        in_use, ssid, signal, security, bssid = parts[0], parts[1], parts[2], parts[3], parts[4]
+        ssid = ssid.strip()
+        if not ssid:
+            continue
+        try:
+            strength = int(str(signal).strip() or "0")
+        except ValueError:
+            strength = 0
+        row = {
+            "ssid": ssid,
+            "signal": str(strength),
+            "security": security.strip(),
+            "inUse": in_use.strip() == "*",
+            "bssid": bssid.strip(),
+        }
+        previous = best.get(ssid)
+        if previous is None or row["inUse"] or int(row["signal"]) > int(previous["signal"]):
+            if previous and previous["inUse"]:
+                row["inUse"] = True
+            best[ssid] = row
+    networks = list(best.values())
+    networks.sort(key=lambda item: (not item["inUse"], -int(item["signal"] or 0)))
+    return networks
+
+
 def network_status(settings: dict[str, Any]) -> dict[str, Any]:
     ssid = str(settings.get("network", {}).get("ssid") or "")
-    # Prefer NetworkManager when present (device image).
     nmcli = shutil.which("nmcli")
     if nmcli:
         try:
-            completed = subprocess.run(
+            completed = _run_cmd(
                 [nmcli, "-t", "-f", "ACTIVE,SSID,SIGNAL,DEVICE", "dev", "wifi"],
-                capture_output=True,
-                text=True,
                 timeout=8,
-                check=False,
             )
             active = None
             for line in (completed.stdout or "").splitlines():
-                parts = line.split(":")
+                parts = _nmcli_fields(line)
                 if len(parts) >= 4 and parts[0] == "yes":
                     active = {
                         "connected": True,
@@ -326,15 +497,20 @@ def network_status(settings: dict[str, Any]) -> dict[str, Any]:
                 "backend": "nmcli",
                 "message": "Not connected",
             }
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             pass
 
     if DEV_MODE:
         if ssid:
+            signal = "80"
+            for item in mock_wifi_networks({"network": {"ssid": ssid}}):
+                if item["ssid"] == ssid:
+                    signal = str(item["signal"])
+                    break
             return {
                 "connected": True,
                 "ssid": ssid,
-                "signal": "80",
+                "signal": signal,
                 "backend": "dev",
                 "message": "Simulated connection (desktop)",
             }
@@ -353,6 +529,43 @@ def network_status(settings: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def scan_wifi(settings: dict[str, Any]) -> dict[str, Any]:
+    nmcli = shutil.which("nmcli")
+    if nmcli:
+        try:
+            _run_cmd([nmcli, "device", "wifi", "rescan"], timeout=12)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            time.sleep(1.5)
+            completed = _run_cmd(
+                [nmcli, "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY,BSSID", "device", "wifi", "list"],
+                timeout=12,
+            )
+            networks = parse_wifi_list(completed.stdout or "")
+            return {
+                "networks": networks,
+                "backend": "nmcli",
+                "network": network_status(settings),
+            }
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    if DEV_MODE:
+        return {
+            "networks": mock_wifi_networks(settings),
+            "backend": "dev",
+            "network": network_status(settings),
+        }
+
+    return {
+        "networks": [],
+        "backend": "none",
+        "network": network_status(settings),
+        "message": "NetworkManager not available",
+    }
+
+
 def apply_wifi(ssid: str, password: str) -> dict[str, Any]:
     nmcli = shutil.which("nmcli")
     if nmcli and ssid:
@@ -360,18 +573,12 @@ def apply_wifi(ssid: str, password: str) -> dict[str, Any]:
             args = [nmcli, "dev", "wifi", "connect", ssid]
             if password:
                 args.extend(["password", password])
-            completed = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                timeout=45,
-                check=False,
-            )
+            completed = _run_cmd(args, timeout=45)
             if completed.returncode != 0:
                 detail = (completed.stderr or completed.stdout or "nmcli failed").strip()
                 raise ValueError(detail)
             return {"ok": True, "message": f"Connected to {ssid}", "backend": "nmcli"}
-        except OSError as exc:
+        except (OSError, subprocess.TimeoutExpired) as exc:
             raise ValueError(str(exc)) from exc
 
     if DEV_MODE:
@@ -382,6 +589,274 @@ def apply_wifi(ssid: str, password: str) -> dict[str, Any]:
         }
 
     raise ValueError("Wi-Fi connect requires NetworkManager (nmcli) on device")
+
+
+BT_LOCK = threading.Lock()
+_DEV_BT: dict[str, Any] = {
+    "powered": True,
+    "discovering": False,
+    "devices": [
+        {
+            "address": "00:11:22:33:44:55",
+            "name": "TV Remote",
+            "paired": True,
+            "connected": True,
+            "trusted": True,
+        },
+        {
+            "address": "AA:BB:CC:11:22:33",
+            "name": "Soundbar",
+            "paired": False,
+            "connected": False,
+            "trusted": False,
+        },
+    ],
+}
+
+
+def run_bluetoothctl(*args: str, timeout: float = 20) -> tuple[int, str]:
+    binary = shutil.which("bluetoothctl")
+    if not binary:
+        return 127, "bluetoothctl not installed"
+    try:
+        completed = _run_cmd([binary, *args], timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+    out = ((completed.stdout or "") + (completed.stderr or "")).strip()
+    return completed.returncode, out
+
+
+def _parse_bt_devices(args: list[str]) -> dict[str, str]:
+    code, output = run_bluetoothctl(*args, timeout=8)
+    if code == 127:
+        return {}
+    found: dict[str, str] = {}
+    for line in output.splitlines():
+        match = re.match(r"Device\s+([0-9A-Fa-f:]{17})\s+(.*)$", line.strip())
+        if not match:
+            continue
+        address = match.group(1).upper()
+        name = match.group(2).strip() or address
+        found[address] = name
+    return found
+
+
+def _bt_show_flags(output: str) -> tuple[bool, bool]:
+    powered = False
+    discovering = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Powered:"):
+            powered = stripped.split(":", 1)[1].strip().lower() == "yes"
+        elif stripped.startswith("Discovering:"):
+            discovering = stripped.split(":", 1)[1].strip().lower() == "yes"
+    return powered, discovering
+
+
+def mock_bluetooth_status() -> dict[str, Any]:
+    with BT_LOCK:
+        return {
+            "powered": bool(_DEV_BT["powered"]),
+            "discovering": bool(_DEV_BT["discovering"]),
+            "backend": "dev",
+            "devices": [dict(item) for item in _DEV_BT["devices"]],
+        }
+
+
+def mock_bluetooth_action(
+    action: str,
+    address: str = "",
+    powered: bool | None = None,
+) -> dict[str, Any]:
+    addr = address.strip().upper()
+    with BT_LOCK:
+        devices: list[dict[str, Any]] = _DEV_BT["devices"]
+
+        def find() -> dict[str, Any]:
+            for item in devices:
+                if str(item["address"]).upper() == addr:
+                    return item
+            raise ValueError(f"Unknown device: {address}")
+
+        if action == "power":
+            _DEV_BT["powered"] = (not bool(_DEV_BT["powered"])) if powered is None else bool(powered)
+            if not _DEV_BT["powered"]:
+                _DEV_BT["discovering"] = False
+                for item in devices:
+                    item["connected"] = False
+            return {
+                "ok": True,
+                "message": "Bluetooth on" if _DEV_BT["powered"] else "Bluetooth off",
+            }
+        if action == "scan":
+            if not _DEV_BT["powered"]:
+                raise ValueError("Turn Bluetooth on first")
+            if not any(not item["paired"] for item in devices):
+                devices.append(
+                    {
+                        "address": "DE:AD:BE:EF:00:01",
+                        "name": "Keyboard",
+                        "paired": False,
+                        "connected": False,
+                        "trusted": False,
+                    }
+                )
+            return {"ok": True, "message": "Scan complete"}
+        if not addr:
+            raise ValueError("address is required")
+        if action == "pair":
+            if not _DEV_BT["powered"]:
+                raise ValueError("Turn Bluetooth on first")
+            item = find()
+            item["paired"] = True
+            item["trusted"] = True
+            item["connected"] = True
+            for other in devices:
+                if other is not item:
+                    other["connected"] = False
+            return {"ok": True, "message": f"Paired with {item['name']}"}
+        if action == "connect":
+            if not _DEV_BT["powered"]:
+                raise ValueError("Turn Bluetooth on first")
+            item = find()
+            if not item["paired"]:
+                item["paired"] = True
+                item["trusted"] = True
+            item["connected"] = True
+            return {"ok": True, "message": f"Connected to {item['name']}"}
+        if action == "disconnect":
+            item = find()
+            item["connected"] = False
+            return {"ok": True, "message": f"Disconnected {item['name']}"}
+        if action == "remove":
+            item = find()
+            name = item["name"]
+            _DEV_BT["devices"] = [entry for entry in devices if entry is not item]
+            return {"ok": True, "message": f"Forgot {name}"}
+        raise ValueError(f"Unknown Bluetooth action: {action}")
+
+
+def bluetooth_devices_real() -> list[dict[str, Any]]:
+    known = _parse_bt_devices(["devices"])
+    paired = _parse_bt_devices(["devices", "Paired"]) or _parse_bt_devices(["paired-devices"])
+    connected = _parse_bt_devices(["devices", "Connected"])
+    trusted = _parse_bt_devices(["devices", "Trusted"])
+    addresses = dict(known)
+    addresses.update(paired)
+    addresses.update(connected)
+    addresses.update(trusted)
+    devices: list[dict[str, Any]] = []
+    for addr, name in addresses.items():
+        is_paired = addr in paired
+        devices.append(
+            {
+                "address": addr,
+                "name": name,
+                "paired": is_paired,
+                "connected": addr in connected,
+                "trusted": addr in trusted or is_paired,
+            }
+        )
+    devices.sort(
+        key=lambda item: (not item["connected"], not item["paired"], str(item["name"]).lower())
+    )
+    return devices
+
+
+def bluetooth_status() -> dict[str, Any]:
+    code, output = run_bluetoothctl("show", timeout=8)
+    if code != 127 and "No default controller" not in output and "not available" not in output.lower():
+        powered, discovering = _bt_show_flags(output)
+        if "Powered:" in output or powered or discovering or bluetooth_devices_real():
+            return {
+                "powered": powered,
+                "discovering": discovering,
+                "backend": "bluez",
+                "devices": bluetooth_devices_real(),
+            }
+
+    if DEV_MODE:
+        return mock_bluetooth_status()
+
+    return {
+        "powered": False,
+        "discovering": False,
+        "backend": "none",
+        "devices": [],
+        "message": "Bluetooth adapter not available",
+    }
+
+
+def bluetooth_action(
+    action: str,
+    address: str = "",
+    powered: bool | None = None,
+) -> dict[str, Any]:
+    action = action.strip().lower()
+    if action not in {"power", "scan", "pair", "connect", "disconnect", "remove"}:
+        raise ValueError(f"Unknown Bluetooth action: {action}")
+
+    status = bluetooth_status()
+    if status.get("backend") == "dev":
+        result = mock_bluetooth_action(action, address, powered)
+        return {**result, "bluetooth": mock_bluetooth_status()}
+
+    if status.get("backend") != "bluez":
+        if DEV_MODE:
+            result = mock_bluetooth_action(action, address, powered)
+            return {**result, "bluetooth": mock_bluetooth_status()}
+        raise ValueError("Bluetooth requires BlueZ (bluetoothctl) on device")
+
+    addr = address.strip()
+    if action == "power":
+        want_on = (not bool(status.get("powered"))) if powered is None else bool(powered)
+        code, output = run_bluetoothctl("power", "on" if want_on else "off", timeout=12)
+        if code not in (0, 127) and "succeeded" not in output.lower() and "Changing power" not in output:
+            if code != 0:
+                raise ValueError(output or "Could not change Bluetooth power")
+        return {
+            "ok": True,
+            "message": "Bluetooth on" if want_on else "Bluetooth off",
+            "bluetooth": bluetooth_status(),
+        }
+
+    if action == "scan":
+        if not status.get("powered"):
+            raise ValueError("Turn Bluetooth on first")
+        _code, _output = run_bluetoothctl("--timeout", "8", "scan", "on", timeout=14)
+        return {"ok": True, "message": "Scan complete", "bluetooth": bluetooth_status()}
+
+    if not addr:
+        raise ValueError("address is required")
+
+    if action == "pair":
+        if not status.get("powered"):
+            raise ValueError("Turn Bluetooth on first")
+        pair_code, pair_out = run_bluetoothctl("pair", addr, timeout=40)
+        run_bluetoothctl("trust", addr, timeout=12)
+        conn_code, conn_out = run_bluetoothctl("connect", addr, timeout=20)
+        if pair_code != 0 and "already" not in pair_out.lower() and conn_code != 0:
+            raise ValueError(pair_out or conn_out or "Pairing failed")
+        return {"ok": True, "message": f"Paired with {addr}", "bluetooth": bluetooth_status()}
+
+    if action == "connect":
+        if not status.get("powered"):
+            raise ValueError("Turn Bluetooth on first")
+        code, output = run_bluetoothctl("connect", addr, timeout=20)
+        if code != 0 and "successful" not in output.lower():
+            raise ValueError(output or "Connect failed")
+        return {"ok": True, "message": f"Connected to {addr}", "bluetooth": bluetooth_status()}
+
+    if action == "disconnect":
+        code, output = run_bluetoothctl("disconnect", addr, timeout=16)
+        if code != 0 and "successful" not in output.lower():
+            raise ValueError(output or "Disconnect failed")
+        return {"ok": True, "message": f"Disconnected {addr}", "bluetooth": bluetooth_status()}
+
+    code, output = run_bluetoothctl("remove", addr, timeout=16)
+    if code != 0:
+        raise ValueError(output or "Could not forget device")
+    return {"ok": True, "message": f"Forgot {addr}", "bluetooth": bluetooth_status()}
 
 
 def update_status_payload() -> dict[str, Any]:
@@ -574,9 +1049,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"apps": load_apps()})
             if path == "/settings":
                 return self._send(200, {"settings": load_settings()})
+            if path == "/network/scan":
+                settings = load_settings()
+                payload = scan_wifi(settings)
+                payload["settings"] = settings["network"]
+                return self._send(200, payload)
             if path == "/network":
                 settings = load_settings()
                 return self._send(200, {"network": network_status(settings), "settings": settings["network"]})
+            if path == "/bluetooth":
+                return self._send(200, {"bluetooth": bluetooth_status()})
             if path == "/system":
                 settings = load_settings()
                 return self._send(
@@ -588,12 +1070,13 @@ class Handler(BaseHTTPRequestHandler):
                         "shellUrl": SHELL_URL,
                         "ublock": {
                             "enabled": True,
-                            "extension": "uBlock Origin",
-                            "note": "Loaded via --load-extension in the kiosk session",
+                            "extension": "uBlock Origin Lite",
+                            "note": "Loaded via --load-extension (Manifest V3)",
                         },
                         "dev": DEV_MODE,
                         "dataDir": str(data_dir()),
                         "channelUrl": settings.get("channelUrl"),
+                        "catalogUrl": settings.get("catalogUrl"),
                         "display": settings.get("display"),
                     },
                 )
@@ -683,6 +1166,21 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
 
+            if path == "/bluetooth":
+                body = self._read_json() if int(self.headers.get("Content-Length", "0") or "0") else {}
+                action = str(body.get("action") or "").strip()
+                if not action:
+                    return self._send(400, {"detail": "action is required"})
+                powered = body.get("powered")
+                if powered is not None:
+                    powered = bool(powered)
+                result = bluetooth_action(
+                    action,
+                    str(body.get("address") or ""),
+                    powered if isinstance(powered, bool) else None,
+                )
+                return self._send(200, result)
+
             if path == "/launch/ack":
                 launch = launch_file()
                 if launch.exists():
@@ -748,7 +1246,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"detail": f"App not installed: {app_id}"})
                 url = apps[app_id]["startUrl"]
                 write_launch(url)
-                if DEV_MODE:
+                # Optional: open an external browser window (desktop only).
+                # Default is off — the shell / kiosk-bridge navigates the same tab.
+                if DEV_MODE and os.environ.get("BLACKHOLE_LAUNCH_EXTERNAL", "0") == "1":
                     for browser in (
                         "chromium",
                         "chromium-browser",
@@ -787,6 +1287,9 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     data_dir()
     save_settings(load_settings())
+    ensure_catalog_cache()
+    # Best-effort remote refresh at startup; offline keeps local cache.
+    sync_catalog_from_remote()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"blackholed listening on http://{HOST}:{PORT} (dev={DEV_MODE})", flush=True)
     try:

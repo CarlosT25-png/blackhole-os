@@ -23,6 +23,7 @@ export type NetworkSettings = {
 
 export type DeviceSettings = {
   channelUrl: string;
+  catalogUrl: string;
   display: DisplaySettings;
   network: NetworkSettings;
 };
@@ -33,6 +34,30 @@ export type NetworkStatus = {
   signal?: string;
   device?: string;
   backend: string;
+  message?: string;
+};
+
+export type WifiNetwork = {
+  ssid: string;
+  signal: string;
+  security: string;
+  inUse: boolean;
+  bssid?: string;
+};
+
+export type BluetoothDevice = {
+  address: string;
+  name: string;
+  paired: boolean;
+  connected: boolean;
+  trusted?: boolean;
+};
+
+export type BluetoothStatus = {
+  powered: boolean;
+  discovering: boolean;
+  backend: string;
+  devices: BluetoothDevice[];
   message?: string;
 };
 
@@ -49,6 +74,7 @@ export type SystemInfo = {
   dev: boolean;
   dataDir: string;
   channelUrl?: string;
+  catalogUrl?: string;
   display?: DisplaySettings;
 };
 
@@ -138,6 +164,23 @@ export const api = {
     }>("/network", {
       method: "POST",
       body: JSON.stringify({ ssid, password }),
+    }),
+  scanWifi: () =>
+    request<{
+      networks: WifiNetwork[];
+      network: NetworkStatus;
+      settings?: NetworkSettings;
+      backend?: string;
+      message?: string;
+    }>("/network/scan"),
+  bluetooth: () => request<{ bluetooth: BluetoothStatus }>("/bluetooth"),
+  bluetoothAction: (
+    action: "power" | "scan" | "pair" | "connect" | "disconnect" | "remove",
+    extra?: { address?: string; powered?: boolean },
+  ) =>
+    request<{ ok: boolean; message: string; bluetooth: BluetoothStatus }>("/bluetooth", {
+      method: "POST",
+      body: JSON.stringify({ action, ...extra }),
     }),
   update: () => request<UpdateStatus>("/update"),
   checkUpdate: (channelUrl?: string) =>
