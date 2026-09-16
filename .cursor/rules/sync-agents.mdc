@@ -1,0 +1,31 @@
+---
+description: Keep AGENTS.md in sync when architecture or project structure changes significantly
+alwaysApply: true
+---
+
+# AGENTS.md Sync
+
+After completing a task, you must update `AGENTS.md` if the change materially alters how the project is structured or built.
+
+## Triggers — update when you add or change:
+- New top-level directories or major route groups (e.g., `app/api/`, `lib/`, `components/`)
+- New dependencies that change the stack (database, auth, state management, testing framework)
+- New scripts or changed dev/build workflow
+- Architectural patterns (Server Actions, API routes, middleware, data-fetching strategy)
+- Environment or deployment requirements (new env vars, CI, hosting config)
+- "Do Not Modify" constraints (new generated or protected paths)
+
+## Not triggers — skip for:
+- Bug fixes, styling tweaks, copy changes
+- Single-component refactors with no new patterns
+- Minor dependency patch bumps
+
+## How to update:
+1. Edit only the sections that changed — do not rewrite the whole file.
+2. Keep the existing section structure intact.
+3. Refresh the **Current State** section to reflect what is built vs. placeholder on every trigger.
+4. Update the **Project Structure** tree when directories are added or removed.
+5. Mention the `AGENTS.md` update briefly in your chat response when you make one.
+
+## Example:
+Adding Prisma → update Tech Stack, Architecture, Project Structure, Commands, Environment (DATABASE_URL), and Current State.

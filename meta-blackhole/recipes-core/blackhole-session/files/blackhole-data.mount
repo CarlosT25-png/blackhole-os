@@ -1,14 +1,17 @@
 [Unit]
 Description=Blackhole persistent data partition
-Before=blackholed.service blackhole-kiosk.service
-After=local-fs.target
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target blackholed.service blackhole-kiosk.service
+After=local-fs-pre.target
+# Do not block boot if the label is missing (nofail).
+TimeoutSec=15
 
 [Mount]
-# Partition label set in WKS; adjust per machine if needed.
 What=/dev/disk/by-label/bhdata
 Where=/var/lib/blackhole
 Type=ext4
-Options=defaults
+Options=defaults,nofail
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=local-fs.target

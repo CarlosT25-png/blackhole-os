@@ -3,6 +3,9 @@
 #
 # IMPORTANT: Official Google Chrome 137+ ignores --load-extension.
 # This script prefers Chromium / Chrome for Testing so extensions actually load.
+#
+# Do not run with sudo. Chrome as root on macOS often paints a blank white
+# window, and it root-owns the profile so later non-sudo runs break.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,7 +16,67 @@ CFT_DIR="${ROOT}/scripts/chrome-for-testing"
 SHELL_URL="${BLACKHOLE_SHELL_URL:-http://127.0.0.1:3000/}"
 POLICY_DIR="${PROFILE}/policies/managed"
 
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "Do not run the desktop kiosk with sudo." >&2
+  echo "Chrome as root usually shows a blank white window." >&2
+  echo "  ./scripts/dev-kiosk.sh" >&2
+  exit 1
+fi
+
+if [[ -e "${PROFILE}" ]] && find "${PROFILE}" -user root -print -quit 2>/dev/null | grep -q .; then
+  echo "The kiosk Chrome profile has root-owned files from a previous sudo run." >&2
+  echo "Fix ownership, then retry without sudo:" >&2
+  echo "  sudo chown -R \"${USER}\" \"${PROFILE}\"" >&2
+  exit 1
+fi
+
+shell_http_ok() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "${SHELL_URL}" 2>/dev/null || true)"
+  [[ "${code}" == "200" || "${code}" == "304" ]]
+}
+
+ensure_shell() {
+  if shell_http_ok; then
+    return 0
+  fi
+
+  local port="3000"
+  if [[ "${SHELL_URL}" =~ :([0-9]+) ]]; then
+    port="${BASH_REMATCH[1]}"
+  fi
+
+  if lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Something is listening on :${port} but ${SHELL_URL} is not serving." >&2
+    echo "The Next.js dev server is likely stuck. Restart it, then retry:" >&2
+    echo "  cd apps/shell && npm run dev" >&2
+    exit 1
+  fi
+
+  echo "Shell is not running at ${SHELL_URL}. Starting Next.js…"
+  if [[ ! -d "${ROOT}/apps/shell/node_modules" ]]; then
+    (cd "${ROOT}/apps/shell" && npm install)
+  fi
+  (cd "${ROOT}/apps/shell" && npm run dev) >/tmp/blackhole-shell-dev.log 2>&1 &
+  disown || true
+
+  local i
+  for i in $(seq 1 60); do
+    if shell_http_ok; then
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  echo "Shell did not become ready at ${SHELL_URL}." >&2
+  echo "Last log lines:" >&2
+  tail -n 20 /tmp/blackhole-shell-dev.log >&2 || true
+  echo "Start it yourself:  cd apps/shell && npm run dev" >&2
+  exit 1
+}
+
 mkdir -p "${PROFILE}" "${POLICY_DIR}" "${CFT_DIR}"
+ensure_shell
 
 is_branded_chrome() {
   local bin="$1"
@@ -155,12 +218,59 @@ ensure_ublock() {
   echo "uBlock Origin Lite installed at ${UBLOCK_DIR}" >&2
 }
 
-# Keep policies minimal — modern Chrome/CfT no longer load Manifest V2.
-cat > "${POLICY_DIR}/blackhole.json" <<'EOF'
-{
-  "DefaultBrowserSettingEnabled": false
+# Full kiosk policies — mirror chromium-kiosk.sh (password manager / popups off).
+python3 - "$POLICY_DIR" "$PROFILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+policy_dir = Path(sys.argv[1])
+profile = Path(sys.argv[2])
+policy_dir.mkdir(parents=True, exist_ok=True)
+(profile / "Default").mkdir(parents=True, exist_ok=True)
+
+policy = {
+  "DefaultBrowserSettingEnabled": False,
+  "BrowserSignin": 0,
+  "SyncDisabled": True,
+  "PasswordManagerEnabled": False,
+  "PasswordLeakDetectionEnabled": False,
+  "PasswordSharingEnabled": False,
+  "AutofillAddressEnabled": False,
+  "AutofillCreditCardEnabled": False,
+  "TranslateEnabled": False,
+  "DefaultNotificationsSetting": 2,
+  "DefaultPopupsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "DefaultMediaStreamSetting": 2,
+  "PromptForDownloadLocation": False,
+  "DownloadRestrictions": 3,
+  "BookmarkBarEnabled": False,
+  "SavingBrowserHistoryDisabled": True,
+  "PromotionalTabsEnabled": False,
+  "MetricsReportingEnabled": False,
+  "SearchSuggestEnabled": False,
+  "SpellCheckServiceEnabled": False,
 }
-EOF
+(policy_dir / "blackhole.json").write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+
+prefs_path = profile / "Default" / "Preferences"
+prefs = {}
+if prefs_path.exists():
+  try:
+    loaded = json.loads(prefs_path.read_text(encoding="utf-8"))
+    if isinstance(loaded, dict):
+      prefs = loaded
+  except json.JSONDecodeError:
+    prefs = {}
+prefs["credentials_enable_service"] = False
+profile_prefs = prefs.get("profile")
+if not isinstance(profile_prefs, dict):
+  profile_prefs = {}
+profile_prefs["password_manager_enabled"] = False
+prefs["profile"] = profile_prefs
+prefs_path.write_text(json.dumps(prefs, indent=2) + "\n", encoding="utf-8")
+PY
 
 BROWSER="$(find_browser)" || {
   echo "No Chromium/Chrome binary found. Set BLACKHOLE_CHROMIUM to the path." >&2
@@ -194,10 +304,15 @@ echo "Esc / the top-right Blackhole chip return home."
 
 exec "${BROWSER}" \
   --user-data-dir="${PROFILE}" \
-  --disable-features=DisableLoadExtensionCommandLineSwitch \
+  --disable-features=DisableLoadExtensionCommandLineSwitch,PasswordManagerOnboarding,PasswordImport,AutofillServerCommunication,Translate \
   --enable-unsafe-extension-debugging \
   --load-extension="${EXT_PATHS}" \
   --no-first-run \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
+  --disable-infobars \
+  --ignore-gpu-blocklist \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
+  --enable-accelerated-video-decode \
   --kiosk "${SHELL_URL}"

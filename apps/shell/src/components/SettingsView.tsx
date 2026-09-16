@@ -2,17 +2,36 @@
 
 import { useEffect, useState } from "react";
 import {
+  FocusContext,
+  setFocus,
+  useFocusable,
+} from "@noriginmedia/norigin-spatial-navigation";
+import {
   api,
+  type AdblockFiltering,
+  type AspectRatio,
   type BluetoothDevice,
   type BluetoothStatus,
   type DeviceSettings,
   type NetworkStatus,
+  type RefreshHz,
   type SystemInfo,
+  type TimeClock,
+  type TimeStatus,
   type UpdateStatus,
   type WifiNetwork,
 } from "@/lib/api";
+import { applyDisplay } from "@/lib/display";
 
-type Section = "about" | "network" | "bluetooth" | "display" | "adblock" | "updates";
+type Section =
+  | "about"
+  | "network"
+  | "bluetooth"
+  | "display"
+  | "datetime"
+  | "power"
+  | "adblock"
+  | "updates";
 
 type FocusableProps = {
   focusKey: string;
@@ -33,20 +52,58 @@ type Props = {
   showToast: (message: string, kind?: "info" | "error") => void;
 };
 
+type WifiDialogState =
+  | { kind: "join-other"; ssid: string; password: string }
+  | { kind: "password"; ssid: string; password: string }
+  | null;
+
+type BtDialogState = {
+  address: string;
+  name: string;
+  pin: string;
+} | null;
+
 const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: "about", label: "About", blurb: "Version and machine" },
   { id: "network", label: "Network", blurb: "Wi-Fi for this TV" },
   { id: "bluetooth", label: "Bluetooth", blurb: "Remotes and devices" },
-  { id: "display", label: "Display", blurb: "Scale and motion" },
-  { id: "adblock", label: "Ad block", blurb: "uBlock Origin" },
-  { id: "updates", label: "Updates", blurb: "RAUC OTA channel" },
+  { id: "display", label: "Display", blurb: "Scale, aspect, refresh" },
+  { id: "datetime", label: "Date & time", blurb: "Clock, zone, auto sync" },
+  { id: "power", label: "Power", blurb: "Sleep and power off" },
+  { id: "adblock", label: "Ad block", blurb: "uBlock Origin Lite" },
+  { id: "updates", label: "Updates", blurb: "System and home screen" },
 ];
 
-function applyDisplay(display: DeviceSettings["display"]) {
-  const root = document.documentElement;
-  root.style.setProperty("--ui-scale", String(display.scale / 100));
-  root.dataset.reducedMotion = display.reducedMotion ? "true" : "false";
-}
+const SCALE_OPTIONS = [75, 90, 100, 125, 150] as const;
+const ASPECT_OPTIONS: AspectRatio[] = ["auto", "16:9", "16:10", "4:3"];
+const REFRESH_OPTIONS: RefreshHz[] = ["auto", 50, 60, 75, 120];
+const FILTERING_OPTIONS: { id: AdblockFiltering; label: string }[] = [
+  { id: "none", label: "Off" },
+  { id: "basic", label: "Basic" },
+  { id: "optimal", label: "Optimal" },
+  { id: "complete", label: "Complete" },
+];
+const IDLE_OPTIONS: { sec: number; label: string }[] = [
+  { sec: 0, label: "Never" },
+  { sec: 300, label: "5 min" },
+  { sec: 900, label: "15 min" },
+  { sec: 1800, label: "30 min" },
+  { sec: 3600, label: "1 hour" },
+];
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
 function wifiLocked(network: WifiNetwork) {
   const security = network.security.trim();
@@ -63,6 +120,350 @@ function deviceMeta(device: BluetoothDevice) {
   return "Nearby";
 }
 
+function zoneFocusKey(prefix: string, value: string) {
+  return `${prefix}_${value.replace(/[^a-zA-Z0-9]/g, "_")}`;
+}
+
+function zoneLabel(zone: string) {
+  if (!zone.includes("/")) return zone.replaceAll("_", " ");
+  return zone.split("/").slice(1).join(" / ").replaceAll("_", " ");
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(year, month, 0).getDate();
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function clockToIso(clock: TimeClock) {
+  return `${clock.year}-${pad2(clock.month)}-${pad2(clock.day)}T${pad2(clock.hour)}:${pad2(clock.minute)}:00`;
+}
+
+function formatClock(clock: TimeClock, hour12: boolean) {
+  const month = MONTHS[clock.month - 1] ?? String(clock.month);
+  if (hour12) {
+    const { display, period } = hour12Parts(clock.hour);
+    return `${month} ${clock.day} · ${display}:${pad2(clock.minute)} ${period}`;
+  }
+  return `${month} ${clock.day} · ${pad2(clock.hour)}:${pad2(clock.minute)}`;
+}
+
+function hour12Parts(hour: number) {
+  const period = hour >= 12 ? "PM" : "AM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return { display, period };
+}
+
+function syncCopy(status: TimeStatus | null) {
+  if (!status) return "Checking clock…";
+  if (!status.ntp) return "Off — set the clock on this TV.";
+  if (status.sync === "synced") return "Synced with the network.";
+  if (status.sync === "waiting" || !status.networkOnline) return "Waiting for Wi-Fi.";
+  return "Waiting to sync.";
+}
+
+function timezoneCopy(status: TimeStatus | null) {
+  if (!status) return "Checking timezone…";
+  if (!status.autoTimezone) return "Choose a timezone for this TV.";
+  if (!status.networkOnline) return "Waiting for Wi-Fi to set the timezone.";
+  return `Using ${zoneLabel(status.timezone)} from the network.`;
+}
+
+function Spinner({ label }: { label: string }) {
+  return (
+    <div className="busy-row" role="status" aria-live="polite">
+      <span className="spinner" aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function CredentialDialog({
+  Focusable,
+  title,
+  copy,
+  fields,
+  submitLabel,
+  busyLabel,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  Focusable: (props: FocusableProps) => React.ReactElement;
+  title: string;
+  copy: string;
+  fields: {
+    id: string;
+    focusKey: string;
+    label: string;
+    value: string;
+    type?: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+  }[];
+  submitLabel: string;
+  busyLabel: string;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const { ref, focusKey } = useFocusable({
+    focusKey: "CREDENTIAL_DIALOG",
+    trackChildren: true,
+    isFocusBoundary: true,
+  });
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      const first = fields[0];
+      if (first) {
+        setFocus(first.focusKey);
+        document.getElementById(first.id)?.focus();
+      }
+    }, 40);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- focus first field when dialog opens
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose]);
+
+  return (
+    <FocusContext.Provider value={focusKey}>
+      <div
+        className="modal-backdrop"
+        onClick={() => {
+          if (!busy) onClose();
+        }}
+        role="presentation"
+      >
+        <div
+          ref={ref as never}
+          className="modal-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="credential-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h3 id="credential-title" className="panel-title">
+            {title}
+          </h3>
+          <p className="panel-copy">{copy}</p>
+          {busy ? <Spinner label={busyLabel} /> : null}
+          <div className="settings-stack">
+            {fields.map((field) => (
+              <div key={field.id}>
+                <label className="field-label" htmlFor={field.id}>
+                  {field.label}
+                </label>
+                <Focusable
+                  as="div"
+                  focusKey={field.focusKey}
+                  className="store-field store-field-bare"
+                  onEnterPress={() => {
+                    if (!busy) document.getElementById(field.id)?.focus();
+                  }}
+                >
+                  <input
+                    id={field.id}
+                    type={field.type || "text"}
+                    value={field.value}
+                    disabled={busy}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    placeholder={field.placeholder}
+                    autoComplete="off"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (!busy) onSubmit();
+                      }
+                    }}
+                  />
+                </Focusable>
+              </div>
+            ))}
+          </div>
+          <div className="modal-actions">
+            <Focusable
+              focusKey="CREDENTIAL_CANCEL"
+              className="ghost-btn"
+              onEnterPress={() => {
+                if (!busy) onClose();
+              }}
+            >
+              Cancel
+            </Focusable>
+            <Focusable
+              focusKey="CREDENTIAL_SUBMIT"
+              className="primary-btn"
+              onEnterPress={() => {
+                if (!busy) onSubmit();
+              }}
+            >
+              {busy ? busyLabel : submitLabel}
+            </Focusable>
+          </div>
+        </div>
+      </div>
+    </FocusContext.Provider>
+  );
+}
+
+function ConfirmDialog({
+  Focusable,
+  title,
+  copy,
+  confirmLabel,
+  busyLabel,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  Focusable: (props: FocusableProps) => React.ReactElement;
+  title: string;
+  copy: string;
+  confirmLabel: string;
+  busyLabel: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { ref, focusKey } = useFocusable({
+    focusKey: "CONFIRM_DIALOG",
+    trackChildren: true,
+    isFocusBoundary: true,
+  });
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setFocus("CONFIRM_CANCEL"), 40);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose]);
+
+  return (
+    <FocusContext.Provider value={focusKey}>
+      <div
+        className="modal-backdrop"
+        onClick={() => {
+          if (!busy) onClose();
+        }}
+        role="presentation"
+      >
+        <div
+          ref={ref as never}
+          className="modal-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h3 id="confirm-title" className="panel-title">
+            {title}
+          </h3>
+          <p className="panel-copy">{copy}</p>
+          {busy ? <Spinner label={busyLabel} /> : null}
+          <div className="modal-actions">
+            <Focusable
+              focusKey="CONFIRM_CANCEL"
+              className="ghost-btn"
+              onEnterPress={() => {
+                if (!busy) onClose();
+              }}
+            >
+              Cancel
+            </Focusable>
+            <Focusable
+              focusKey="CONFIRM_SUBMIT"
+              className="primary-btn"
+              onEnterPress={() => {
+                if (!busy) onConfirm();
+              }}
+            >
+              {busy ? busyLabel : confirmLabel}
+            </Focusable>
+          </div>
+        </div>
+      </div>
+    </FocusContext.Provider>
+  );
+}
+
+function TimeStepper({
+  Focusable,
+  focusKey,
+  label,
+  value,
+  display,
+  onChange,
+  min,
+  max,
+  wrap = true,
+}: {
+  Focusable: (props: FocusableProps) => React.ReactElement;
+  focusKey: string;
+  label: string;
+  value: number;
+  display: string;
+  onChange: (value: number) => void;
+  min: number;
+  max: number;
+  wrap?: boolean;
+}) {
+  const step = (delta: number) => {
+    const span = max - min + 1;
+    if (wrap) {
+      onChange(min + ((((value - min + delta) % span) + span) % span));
+      return;
+    }
+    onChange(Math.min(max, Math.max(min, value + delta)));
+  };
+
+  return (
+    <div className="time-stepper">
+      <span className="time-stepper-label">{label}</span>
+      <div className="time-stepper-controls">
+        <Focusable
+          focusKey={`${focusKey}_DEC`}
+          className="choice-chip time-stepper-btn"
+          onEnterPress={() => step(-1)}
+        >
+          −
+        </Focusable>
+        <span className="time-stepper-value">{display}</span>
+        <Focusable
+          focusKey={`${focusKey}_INC`}
+          className="choice-chip time-stepper-btn"
+          onEnterPress={() => step(1)}
+        >
+          +
+        </Focusable>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsView({
   Focusable,
   system,
@@ -76,18 +477,17 @@ export default function SettingsView({
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
   const [scanMessage, setScanMessage] = useState("");
-  const [selectedSsid, setSelectedSsid] = useState("");
-  const [joinOther, setJoinOther] = useState(false);
-  const [ssid, setSsid] = useState("");
-  const [password, setPassword] = useState("");
   const [scanning, setScanning] = useState(false);
   const [bluetooth, setBluetooth] = useState<BluetoothStatus | null>(null);
   const [btSelected, setBtSelected] = useState("");
-  const [channelUrl, setChannelUrl] = useState("");
-  const [catalogUrl, setCatalogUrl] = useState("");
-  const [panelUrl, setPanelUrl] = useState("");
-  const [manualSource, setManualSource] = useState("");
+  const [timeStatus, setTimeStatus] = useState<TimeStatus | null>(null);
+  const [tzRegion, setTzRegion] = useState("");
+  const [clockDraft, setClockDraft] = useState<TimeClock | null>(null);
+  const [powerConfirm, setPowerConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [wifiDialog, setWifiDialog] = useState<WifiDialogState>(null);
+  const [btDialog, setBtDialog] = useState<BtDialogState>(null);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -98,11 +498,6 @@ export default function SettingsView({
         ]);
         setSettings(settingsRes.settings);
         setNetwork(networkRes.network);
-        setSsid(settingsRes.settings.network.ssid || "");
-        setSelectedSsid(settingsRes.settings.network.ssid || "");
-        setChannelUrl(settingsRes.settings.channelUrl || "");
-        setCatalogUrl(settingsRes.settings.catalogUrl || "");
-        setPanelUrl(settingsRes.settings.shellUrl || "");
         applyDisplay(settingsRes.settings.display);
       } catch (err) {
         showToast(err instanceof Error ? err.message : "Settings unavailable", "error");
@@ -134,19 +529,48 @@ export default function SettingsView({
   };
 
   useEffect(() => {
-    if (section !== "network") return;
-    void refreshWifi();
-  }, [section]);
-
-  useEffect(() => {
     if (section !== "bluetooth") return;
     void refreshBluetooth();
+  }, [section]);
+
+  const refreshTime = async () => {
+    try {
+      const status = await api.time();
+      setTimeStatus(status);
+      setClockDraft(status.clock);
+      const current = status.timezone;
+      const region = current.includes("/") ? current.split("/")[0] : current;
+      setTzRegion((prev) => {
+        if (prev && status.zones?.[prev]) return prev;
+        if (status.zones?.[region]) return region;
+        return Object.keys(status.zones || {})[0] || region || "UTC";
+      });
+      if (system) {
+        onSystemChange({
+          ...system,
+          time: status,
+        });
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Clock unavailable", "error");
+    }
+  };
+
+  useEffect(() => {
+    if (section !== "datetime" && section !== "power") return;
+    void refreshTime();
+    if (section !== "datetime") return;
+    const id = window.setInterval(() => {
+      void refreshTime();
+    }, 30_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when opening time/power
   }, [section]);
 
   const saveDisplay = async (patch: Partial<DeviceSettings["display"]>) => {
     if (!settings) return;
     const display = { ...settings.display, ...patch };
-      try {
+    try {
       const res = await api.saveSettings({ display });
       setSettings(res.settings);
       applyDisplay(res.settings.display);
@@ -162,17 +586,46 @@ export default function SettingsView({
     }
   };
 
-  const connectWifi = async (nextSsid = ssid.trim(), nextPassword = password) => {
-    if (!nextSsid) {
+  const saveAdblock = async (filtering: AdblockFiltering) => {
+    if (!settings) return;
+    try {
+      const res = await api.saveSettings({
+        adblock: {
+          ...settings.adblock,
+          filtering,
+        },
+      });
+      setSettings(res.settings);
+      if (system) {
+        onSystemChange({
+          ...system,
+          adblock: res.settings.adblock,
+          ublock: {
+            ...system.ublock,
+            filtering: res.settings.adblock?.filtering ?? filtering,
+          },
+        });
+      }
+      showToast(`Ad block set to ${filtering}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not save ad block", "error");
+    }
+  };
+
+  const connectWifi = async (
+    nextSsid: string,
+    nextPassword: string,
+    options?: { closeDialog?: boolean; rowKey?: string },
+  ) => {
+    if (!nextSsid.trim()) {
       showToast("Enter a network name", "error");
-      return;
+      return false;
     }
     setBusy(true);
+    if (options?.rowKey) setRowBusy(options.rowKey);
     try {
-      const res = await api.connectWifi(nextSsid, nextPassword);
+      const res = await api.connectWifi(nextSsid.trim(), nextPassword);
       setNetwork(res.network);
-      setSsid(nextSsid);
-      setSelectedSsid(nextSsid);
       setSettings((prev) =>
         prev
           ? {
@@ -181,127 +634,132 @@ export default function SettingsView({
             }
           : prev,
       );
-      setPassword("");
       showToast(res.message);
+      if (options?.closeDialog !== false) setWifiDialog(null);
       await refreshWifi();
+      return true;
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Wi-Fi failed", "error");
+      return false;
     } finally {
       setBusy(false);
+      setRowBusy(null);
     }
   };
 
   const selectWifi = (item: WifiNetwork) => {
-    setJoinOther(false);
-    setSelectedSsid(item.ssid);
-    setSsid(item.ssid);
-    if (item.inUse) {
-      return;
-    }
+    if (item.inUse) return;
     if (!wifiLocked(item)) {
-      setPassword("");
-      void connectWifi(item.ssid, "");
+      void connectWifi(item.ssid, "", { rowKey: `wifi:${item.ssid}` });
       return;
     }
-    setPassword("");
+    setWifiDialog({ kind: "password", ssid: item.ssid, password: "" });
   };
 
   const runBluetooth = async (
     action: "power" | "scan" | "pair" | "connect" | "disconnect" | "remove",
-    extra?: { address?: string; powered?: boolean },
+    extra?: { address?: string; powered?: boolean; pin?: string },
+    options?: { closeDialog?: boolean; rowKey?: string },
   ) => {
     setBusy(true);
+    if (options?.rowKey) setRowBusy(options.rowKey);
     try {
       const res = await api.bluetoothAction(action, extra);
       setBluetooth(res.bluetooth);
       showToast(res.message);
+      if (options?.closeDialog) setBtDialog(null);
+      return true;
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Bluetooth failed", "error");
+      return false;
     } finally {
       setBusy(false);
+      setRowBusy(null);
     }
   };
 
   const activateBluetoothDevice = (device: BluetoothDevice) => {
     setBtSelected(device.address);
     if (device.connected) {
-      void runBluetooth("disconnect", { address: device.address });
+      void runBluetooth("disconnect", { address: device.address }, {
+        rowKey: `bt:${device.address}`,
+      });
       return;
     }
     if (device.paired) {
-      void runBluetooth("connect", { address: device.address });
+      void runBluetooth("connect", { address: device.address }, {
+        rowKey: `bt:${device.address}`,
+      });
       return;
     }
-    void runBluetooth("pair", { address: device.address });
+    setBtDialog({ address: device.address, name: device.name, pin: "" });
   };
 
-  const saveChannel = async () => {
-    const url = channelUrl.trim();
-    if (!url) {
-      showToast("Enter a channel URL", "error");
-      return;
-    }
+  const saveTime = async (payload: {
+    timezone?: string;
+    ntp?: boolean;
+    autoTimezone?: boolean;
+    hour12?: boolean;
+    iso?: string;
+  }) => {
     try {
-      const res = await api.saveSettings({ channelUrl: url });
+      const res = await api.saveTime(payload);
       setSettings(res.settings);
-      showToast("Channel saved");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Could not save channel", "error");
-    }
-  };
-
-  const saveCatalog = async () => {
-    const url = catalogUrl.trim();
-    if (!url) {
-      showToast("Enter a catalog URL", "error");
-      return;
-    }
-    try {
-      const res = await api.saveSettings({ catalogUrl: url });
-      setSettings(res.settings);
-      setCatalogUrl(res.settings.catalogUrl || url);
-      showToast("Catalog URL saved");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Could not save catalog URL", "error");
-    }
-  };
-
-  const savePanelUrl = async () => {
-    const url = panelUrl.trim().replace(/\/$/, "");
-    if (!url) {
-      showToast("Enter a panel URL", "error");
-      return;
-    }
-    try {
-      const res = await api.saveSettings({ shellUrl: url });
-      setSettings(res.settings);
-      setPanelUrl(res.settings.shellUrl || url);
-      showToast("Panel URL saved");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Could not save panel URL", "error");
-    }
-  };
-
-  const checkShellUpdate = async () => {
-    setBusy(true);
-    try {
-      const url = panelUrl.trim().replace(/\/$/, "");
-      if (url) {
-        await api.saveSettings({ shellUrl: url });
-      }
-      const result = await api.syncShell(url || undefined);
+      setTimeStatus(res.time);
+      setClockDraft(res.time.clock);
       if (system) {
         onSystemChange({
           ...system,
-          panelUrl: result.shellUrl,
-          shellVersion: result.shellVersion,
-          shellSynced: result.shellSynced,
-          shellReady: result.shellReady,
+          time: res.time,
         });
       }
-      showToast(result.message, result.ok ? "info" : "error");
+      return res.time;
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Shell sync failed", "error");
+      showToast(err instanceof Error ? err.message : "Could not save time", "error");
+      return null;
+    }
+  };
+
+  const saveIdle = async (idleSec: number) => {
+    if (!settings) return;
+    try {
+      const res = await api.saveSettings({
+        power: {
+          ...settings.power,
+          idleSec,
+        },
+      });
+      setSettings(res.settings);
+      if (system) {
+        onSystemChange({
+          ...system,
+          power: {
+            idleSec: res.settings.power?.idleSec ?? idleSec,
+            sleeping: system.power?.sleeping ?? false,
+            backend: system.power?.backend ?? "dev",
+          },
+        });
+      }
+      showToast(idleSec ? `Sleep after ${IDLE_OPTIONS.find((item) => item.sec === idleSec)?.label ?? idleSec}` : "Sleep timer off");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not save power", "error");
+    }
+  };
+
+  const runPower = async (action: "sleep" | "poweroff") => {
+    setBusy(true);
+    try {
+      const res = await api.powerAction(action);
+      if (system && res.power) {
+        onSystemChange({
+          ...system,
+          power: res.power,
+        });
+      }
+      showToast(res.message || (action === "sleep" ? "Sleeping" : "Powering off"));
+      if (action === "poweroff") setPowerConfirm(false);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Power action failed", "error");
     } finally {
       setBusy(false);
     }
@@ -310,12 +768,22 @@ export default function SettingsView({
   const checkForUpdates = async () => {
     setBusy(true);
     try {
-      if (channelUrl.trim()) {
-        await api.saveSettings({ channelUrl: channelUrl.trim() });
+      const [shellResult, status] = await Promise.all([
+        api.syncShell(),
+        api.checkUpdate(),
+      ]);
+      if (system) {
+        onSystemChange({
+          ...system,
+          panelUrl: shellResult.shellUrl,
+          shellVersion: shellResult.shellVersion,
+          shellSynced: shellResult.shellSynced,
+          shellReady: shellResult.shellReady,
+        });
       }
-      const status = await api.checkUpdate(channelUrl.trim() || undefined);
       onUpdateChange(status);
-      showToast(status.message);
+      const bits = [shellResult.message, status.message].filter(Boolean);
+      showToast(bits.join(" · ") || "Checked for updates", shellResult.ok ? "info" : "error");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Check failed", "error");
     } finally {
@@ -326,10 +794,7 @@ export default function SettingsView({
   const installFromChannel = async () => {
     setBusy(true);
     try {
-      const res = await api.installUpdate({
-        fromChannel: true,
-        channelUrl: channelUrl.trim() || undefined,
-      });
+      const res = await api.installUpdate({ fromChannel: true });
       showToast(res.message);
       onUpdateChange(await api.update());
     } catch (err) {
@@ -339,40 +804,32 @@ export default function SettingsView({
     }
   };
 
-  const installManual = async () => {
-    const value = manualSource.trim();
-    if (!value) {
-      showToast("Enter a path or HTTPS URL", "error");
-      return;
-    }
-    setBusy(true);
-    try {
-      const payload = value.startsWith("http://") || value.startsWith("https://")
-        ? { bundleUrl: value }
-        : { bundlePath: value };
-      const res = await api.installUpdate(payload);
-      showToast(res.message);
-      onUpdateChange(await api.update());
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Install failed", "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const scale = settings?.display.scale ?? 100;
-  const reducedMotion = settings?.display.reducedMotion ?? false;
-  const selectedNetwork = networks.find((item) => item.ssid === selectedSsid);
-  const showWifiPassword = joinOther || Boolean(selectedNetwork && wifiLocked(selectedNetwork) && !selectedNetwork.inUse);
+  const scale = settings?.display?.scale ?? 100;
+  const reducedMotion = settings?.display?.reducedMotion ?? false;
+  const aspect = settings?.display?.aspect ?? "auto";
+  const refreshHz = settings?.display?.refreshHz ?? "auto";
+  const filtering =
+    settings?.adblock?.filtering ?? system?.ublock?.filtering ?? "optimal";
   const pairedDevices = bluetooth?.devices.filter((item) => item.paired) ?? [];
   const nearbyDevices =
     bluetooth?.devices.filter((item) => !item.paired && bluetooth.powered) ?? [];
+  const hour12 = timeStatus?.hour12 ?? settings?.time?.hour12 ?? true;
+  const ntpOn = timeStatus?.ntp ?? settings?.time?.ntp ?? true;
+  const autoTimezone = timeStatus?.autoTimezone ?? settings?.time?.autoTimezone ?? true;
+  const idleSec = settings?.power?.idleSec ?? 0;
+  const zones = timeStatus?.zones ?? {};
+  const regionNames = Object.keys(zones);
+  const regionZones = tzRegion ? zones[tzRegion] ?? [] : [];
+  const clock = clockDraft ?? timeStatus?.clock;
+  const hourParts = clock ? hour12Parts(clock.hour) : { display: 12, period: "AM" };
+  const maxDay = clock ? daysInMonth(clock.year, clock.month) : 31;
+  const canInstall = Boolean(update?.remote?.newer || update?.updateAvailable);
 
   return (
     <section className="settings-view">
       <div>
         <h2 className="view-title">Settings</h2>
-        <p className="view-lede">Network, Bluetooth, display, blockers, and OTA for this TV.</p>
+        <p className="view-lede">Network, Bluetooth, display, time, and power for this TV.</p>
       </div>
 
       <div className="settings-layout">
@@ -440,13 +897,9 @@ export default function SettingsView({
                 <Focusable
                   focusKey="SET_WIFI_OTHER"
                   className="choice-chip"
-                  data-active={joinOther ? "true" : "false"}
-                  onEnterPress={() => {
-                    setJoinOther((prev) => !prev);
-                    if (!joinOther) {
-                      setSelectedSsid("");
-                    }
-                  }}
+                  onEnterPress={() =>
+                    setWifiDialog({ kind: "join-other", ssid: "", password: "" })
+                  }
                 >
                   Join other network
                 </Focusable>
@@ -463,88 +916,36 @@ export default function SettingsView({
                       key={`${item.ssid}-${item.bssid || index}`}
                       focusKey={`SET_WIFI_AP_${index}`}
                       className="settings-list-row"
-                      data-active={
-                        !joinOther && selectedSsid === item.ssid ? "true" : "false"
-                      }
+                      data-active="false"
                       data-in-use={item.inUse ? "true" : "false"}
+                      data-busy={rowBusy === `wifi:${item.ssid}` ? "true" : "false"}
                       onEnterPress={() => selectWifi(item)}
                     >
                       <span className="settings-list-row-main">
                         <strong>{item.ssid}</strong>
                         <span className="settings-list-meta">
-                          <span>{item.inUse ? "Connected" : wifiLocked(item) ? "Locked" : "Open"}</span>
+                          <span>
+                            {rowBusy === `wifi:${item.ssid}`
+                              ? "Connecting…"
+                              : item.inUse
+                                ? "Connected"
+                                : wifiLocked(item)
+                                  ? "Locked"
+                                  : "Open"}
+                          </span>
                           <span>signal {item.signal}</span>
                           {item.security && item.security !== "--" ? (
                             <span>{item.security}</span>
                           ) : null}
                         </span>
                       </span>
+                      {rowBusy === `wifi:${item.ssid}` ? (
+                        <span className="spinner spinner-inline" aria-hidden="true" />
+                      ) : null}
                     </Focusable>
                   ))
                 )}
               </div>
-              {(joinOther || showWifiPassword) && (
-                <div className="settings-stack">
-                  {joinOther ? (
-                    <>
-                      <label className="field-label" htmlFor="wifi-ssid">
-                        Network name
-                      </label>
-                      <Focusable
-                        as="div"
-                        focusKey="SET_WIFI_SSID"
-                        className="store-field store-field-bare"
-                        onEnterPress={() => {
-                          document.getElementById("wifi-ssid")?.focus();
-                        }}
-                      >
-                        <input
-                          id="wifi-ssid"
-                          value={ssid}
-                          onChange={(e) => setSsid(e.target.value)}
-                          placeholder="Hidden or other SSID"
-                          autoComplete="off"
-                        />
-                      </Focusable>
-                    </>
-                  ) : (
-                    <p className="panel-copy">Password for {selectedSsid}</p>
-                  )}
-                  <label className="field-label" htmlFor="wifi-pass">
-                    Password
-                  </label>
-                  <Focusable
-                    as="div"
-                    focusKey="SET_WIFI_PASS"
-                    className="store-field store-field-bare"
-                    onEnterPress={() => {
-                      document.getElementById("wifi-pass")?.focus();
-                    }}
-                  >
-                    <input
-                      id="wifi-pass"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Optional on open networks"
-                      autoComplete="off"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void connectWifi();
-                        }
-                      }}
-                    />
-                  </Focusable>
-                  <Focusable
-                    focusKey="SET_WIFI_SAVE"
-                    className="primary-btn"
-                    onEnterPress={() => void connectWifi()}
-                  >
-                    {busy ? "Working…" : joinOther ? "Save and connect" : "Connect"}
-                  </Focusable>
-                </div>
-              )}
             </>
           )}
 
@@ -574,7 +975,7 @@ export default function SettingsView({
                   className="primary-btn"
                   onEnterPress={() => void runBluetooth("scan")}
                 >
-                  {busy ? "Working…" : "Scan"}
+                  {busy && !btDialog && !rowBusy ? "Working…" : "Scan"}
                 </Focusable>
               </div>
               {pairedDevices.length > 0 ? (
@@ -588,16 +989,26 @@ export default function SettingsView({
                           className="settings-list-row"
                           data-active={btSelected === device.address ? "true" : "false"}
                           data-in-use={device.connected ? "true" : "false"}
+                          data-busy={rowBusy === `bt:${device.address}` ? "true" : "false"}
                           onFocus={() => setBtSelected(device.address)}
                           onEnterPress={() => activateBluetoothDevice(device)}
                         >
                           <span className="settings-list-row-main">
                             <strong>{device.name}</strong>
                             <span className="settings-list-meta">
-                              <span>{deviceMeta(device)}</span>
+                              <span>
+                                {rowBusy === `bt:${device.address}`
+                                  ? device.connected
+                                    ? "Disconnecting…"
+                                    : "Connecting…"
+                                  : deviceMeta(device)}
+                              </span>
                               <span className="mono">{device.address}</span>
                             </span>
                           </span>
+                          {rowBusy === `bt:${device.address}` ? (
+                            <span className="spinner spinner-inline" aria-hidden="true" />
+                          ) : null}
                         </Focusable>
                         <Focusable
                           focusKey={btFocusKey("SET_BT_FORGET", device.address)}
@@ -629,16 +1040,24 @@ export default function SettingsView({
                           focusKey={btFocusKey("SET_BT_NEAR", device.address)}
                           className="settings-list-row"
                           data-active={btSelected === device.address ? "true" : "false"}
+                          data-busy={rowBusy === `bt:${device.address}` ? "true" : "false"}
                           onFocus={() => setBtSelected(device.address)}
                           onEnterPress={() => activateBluetoothDevice(device)}
                         >
                           <span className="settings-list-row-main">
                             <strong>{device.name}</strong>
                             <span className="settings-list-meta">
-                              <span>{deviceMeta(device)}</span>
+                              <span>
+                                {rowBusy === `bt:${device.address}`
+                                  ? "Pairing…"
+                                  : deviceMeta(device)}
+                              </span>
                               <span className="mono">{device.address}</span>
                             </span>
                           </span>
+                          {rowBusy === `bt:${device.address}` ? (
+                            <span className="spinner spinner-inline" aria-hidden="true" />
+                          ) : null}
                         </Focusable>
                       ))
                     )}
@@ -653,7 +1072,7 @@ export default function SettingsView({
               <h3 className="panel-title">Display</h3>
               <p className="panel-copy">UI scale for sitting farther from the TV.</p>
               <div className="choice-row" role="group" aria-label="UI scale">
-                {[100, 125, 150].map((value) => (
+                {SCALE_OPTIONS.map((value) => (
                   <Focusable
                     key={value}
                     focusKey={`SET_SCALE_${value}`}
@@ -665,6 +1084,37 @@ export default function SettingsView({
                   </Focusable>
                 ))}
               </div>
+
+              <p className="panel-copy">Aspect ratio for this display.</p>
+              <div className="choice-row" role="group" aria-label="Aspect ratio">
+                {ASPECT_OPTIONS.map((value) => (
+                  <Focusable
+                    key={value}
+                    focusKey={`SET_ASPECT_${value.replace(":", "_")}`}
+                    className="choice-chip"
+                    data-active={aspect === value ? "true" : "false"}
+                    onEnterPress={() => void saveDisplay({ aspect: value })}
+                  >
+                    {value === "auto" ? "Auto" : value}
+                  </Focusable>
+                ))}
+              </div>
+
+              <p className="panel-copy">Refresh rate. Applies on the TV image.</p>
+              <div className="choice-row" role="group" aria-label="Refresh rate">
+                {REFRESH_OPTIONS.map((value) => (
+                  <Focusable
+                    key={String(value)}
+                    focusKey={`SET_HZ_${value}`}
+                    className="choice-chip"
+                    data-active={refreshHz === value ? "true" : "false"}
+                    onEnterPress={() => void saveDisplay({ refreshHz: value })}
+                  >
+                    {value === "auto" ? "Auto" : `${value} Hz`}
+                  </Focusable>
+                ))}
+              </div>
+
               <Focusable
                 focusKey="SET_MOTION"
                 className="choice-chip choice-chip-wide"
@@ -676,22 +1126,307 @@ export default function SettingsView({
             </>
           )}
 
+          {section === "datetime" && (
+            <>
+              <h3 className="panel-title">Date & time</h3>
+              <p className="time-clock" aria-live="polite">
+                {clock ? formatClock(clock, hour12) : "—"}
+              </p>
+              <p className="panel-copy">{syncCopy(timeStatus)}</p>
+
+              <p className="panel-copy">Automatic time. Syncs when Wi-Fi is available.</p>
+              <Focusable
+                focusKey="SET_NTP"
+                className="choice-chip choice-chip-wide"
+                data-active={ntpOn ? "true" : "false"}
+                onEnterPress={() => {
+                  void saveTime({ ntp: !ntpOn }).then((next) => {
+                    if (next) showToast(next.ntp ? "Automatic time on" : "Automatic time off");
+                  });
+                }}
+              >
+                {ntpOn ? "Automatic time on" : "Automatic time off"}
+              </Focusable>
+
+              <p className="panel-copy">{timezoneCopy(timeStatus)}</p>
+              <Focusable
+                focusKey="SET_AUTO_TZ"
+                className="choice-chip choice-chip-wide"
+                data-active={autoTimezone ? "true" : "false"}
+                onEnterPress={() => {
+                  void saveTime({ autoTimezone: !autoTimezone }).then((next) => {
+                    if (next) {
+                      showToast(
+                        next.autoTimezone
+                          ? "Automatic timezone on"
+                          : "Automatic timezone off",
+                      );
+                    }
+                  });
+                }}
+              >
+                {autoTimezone ? "Automatic timezone on" : "Automatic timezone off"}
+              </Focusable>
+
+              <p className="panel-copy">Clock format.</p>
+              <div className="choice-row" role="group" aria-label="Clock format">
+                <Focusable
+                  focusKey="SET_HOUR12"
+                  className="choice-chip"
+                  data-active={hour12 ? "true" : "false"}
+                  onEnterPress={() => {
+                    void saveTime({ hour12: true }).then((next) => {
+                      if (next) showToast("12-hour clock");
+                    });
+                  }}
+                >
+                  12-hour
+                </Focusable>
+                <Focusable
+                  focusKey="SET_HOUR24"
+                  className="choice-chip"
+                  data-active={!hour12 ? "true" : "false"}
+                  onEnterPress={() => {
+                    void saveTime({ hour12: false }).then((next) => {
+                      if (next) showToast("24-hour clock");
+                    });
+                  }}
+                >
+                  24-hour
+                </Focusable>
+              </div>
+
+              {!autoTimezone ? (
+                <>
+              <p className="panel-copy">Timezone region.</p>
+              <div className="choice-row" role="group" aria-label="Timezone region">
+                {regionNames.map((region) => (
+                  <Focusable
+                    key={region}
+                    focusKey={zoneFocusKey("SET_TZ_REGION", region)}
+                    className="choice-chip"
+                    data-active={tzRegion === region ? "true" : "false"}
+                    onEnterPress={() => setTzRegion(region)}
+                  >
+                    {region.replaceAll("_", " ")}
+                  </Focusable>
+                ))}
+              </div>
+
+              {regionZones.length ? (
+                <>
+                  <p className="settings-list-heading">City</p>
+                  <div className="settings-list" role="list">
+                    {regionZones.map((zone) => (
+                      <Focusable
+                        key={zone}
+                        focusKey={zoneFocusKey("SET_TZ_ZONE", zone)}
+                        className="settings-list-row"
+                        data-active={timeStatus?.timezone === zone ? "true" : "false"}
+                        onEnterPress={() => {
+                          void saveTime({ timezone: zone }).then((next) => {
+                            if (next) showToast(zoneLabel(zone));
+                          });
+                        }}
+                      >
+                        <span className="settings-list-row-main">
+                          <strong>{zoneLabel(zone)}</strong>
+                          <span className="settings-list-meta">{zone}</span>
+                        </span>
+                      </Focusable>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+                </>
+              ) : null}
+
+              {!ntpOn && clock ? (
+                <>
+                  <p className="panel-copy">Set the clock on this TV.</p>
+                  <div className="time-steppers">
+                    <TimeStepper
+                      Focusable={Focusable}
+                      focusKey="SET_YEAR"
+                      label="Year"
+                      value={clock.year}
+                      display={String(clock.year)}
+                      min={2020}
+                      max={2038}
+                      wrap={false}
+                      onChange={(year) =>
+                        setClockDraft({
+                          ...clock,
+                          year,
+                          day: Math.min(clock.day, daysInMonth(year, clock.month)),
+                        })
+                      }
+                    />
+                    <TimeStepper
+                      Focusable={Focusable}
+                      focusKey="SET_MONTH"
+                      label="Month"
+                      value={clock.month}
+                      display={MONTHS[clock.month - 1] ?? String(clock.month)}
+                      min={1}
+                      max={12}
+                      onChange={(month) =>
+                        setClockDraft({
+                          ...clock,
+                          month,
+                          day: Math.min(clock.day, daysInMonth(clock.year, month)),
+                        })
+                      }
+                    />
+                    <TimeStepper
+                      Focusable={Focusable}
+                      focusKey="SET_DAY"
+                      label="Day"
+                      value={clock.day}
+                      display={String(clock.day)}
+                      min={1}
+                      max={maxDay}
+                      onChange={(day) => setClockDraft({ ...clock, day })}
+                    />
+                    {hour12 ? (
+                      <>
+                        <TimeStepper
+                          Focusable={Focusable}
+                          focusKey="SET_HOUR"
+                          label="Hour"
+                          value={hourParts.display}
+                          display={String(hourParts.display)}
+                          min={1}
+                          max={12}
+                          onChange={(nextHour) => {
+                            const hour24 =
+                              hourParts.period === "AM"
+                                ? nextHour % 12
+                                : (nextHour % 12) + 12;
+                            setClockDraft({ ...clock, hour: hour24 });
+                          }}
+                        />
+                        <Focusable
+                          focusKey="SET_PERIOD"
+                          className="choice-chip choice-chip-wide"
+                          data-active="true"
+                          onEnterPress={() => {
+                            const hour =
+                              hourParts.period === "AM"
+                                ? (clock.hour % 12) + 12
+                                : clock.hour % 12;
+                            setClockDraft({ ...clock, hour });
+                          }}
+                        >
+                          {hourParts.period}
+                        </Focusable>
+                      </>
+                    ) : (
+                      <TimeStepper
+                        Focusable={Focusable}
+                        focusKey="SET_HOUR"
+                        label="Hour"
+                        value={clock.hour}
+                        display={pad2(clock.hour)}
+                        min={0}
+                        max={23}
+                        onChange={(hour) => setClockDraft({ ...clock, hour })}
+                      />
+                    )}
+                    <TimeStepper
+                      Focusable={Focusable}
+                      focusKey="SET_MINUTE"
+                      label="Minute"
+                      value={clock.minute}
+                      display={pad2(clock.minute)}
+                      min={0}
+                      max={59}
+                      onChange={(minute) => setClockDraft({ ...clock, minute })}
+                    />
+                  </div>
+                  <div className="button-row">
+                    <Focusable
+                      focusKey="SET_TIME_SAVE"
+                      className="primary-btn"
+                      onEnterPress={() => {
+                        void saveTime({ iso: clockToIso(clock) }).then((next) => {
+                          if (next) showToast("Clock saved");
+                        });
+                      }}
+                    >
+                      Save clock
+                    </Focusable>
+                  </div>
+                </>
+              ) : null}
+            </>
+          )}
+
+          {section === "power" && (
+            <>
+              <h3 className="panel-title">Power</h3>
+              <p className="panel-copy">
+                Sleep turns the screen off. Keyboard, mouse, or remote wakes it.
+              </p>
+              <div className="button-row">
+                <Focusable
+                  focusKey="SET_SLEEP"
+                  className="primary-btn"
+                  onEnterPress={() => void runPower("sleep")}
+                >
+                  Sleep
+                </Focusable>
+                <Focusable
+                  focusKey="SET_POWEROFF"
+                  className="pager-btn"
+                  onEnterPress={() => setPowerConfirm(true)}
+                >
+                  Power off
+                </Focusable>
+              </div>
+              <p className="panel-copy">Sleep after no input.</p>
+              <div className="choice-row" role="group" aria-label="Sleep timer">
+                {IDLE_OPTIONS.map((item) => (
+                  <Focusable
+                    key={item.sec}
+                    focusKey={`SET_IDLE_${item.sec}`}
+                    className="choice-chip"
+                    data-active={idleSec === item.sec ? "true" : "false"}
+                    onEnterPress={() => void saveIdle(item.sec)}
+                  >
+                    {item.label}
+                  </Focusable>
+                ))}
+              </div>
+            </>
+          )}
+
           {section === "adblock" && (
             <>
               <h3 className="panel-title">Ad block</h3>
               <p className={system?.ublock.enabled ? "status-ok" : "status-fault"}>
                 {system?.ublock.enabled
-                  ? "uBlock Origin is enabled in the Chromium kiosk"
-                  : "uBlock Origin was not detected"}
+                  ? "uBlock Origin Lite is enabled in the Chromium kiosk"
+                  : "uBlock Origin Lite was not detected"}
               </p>
               <p className="panel-copy">
                 {system?.ublock.note ||
                   "Loaded with --load-extension on every kiosk start."}
               </p>
-              <p className="panel-copy">
-                Full uBlock Origin (Manifest V2) ships with the image. Filter lists
-                update when the TV is online.
-              </p>
+              <p className="panel-copy">Filtering level for all sites.</p>
+              <div className="choice-row" role="group" aria-label="Ad block level">
+                {FILTERING_OPTIONS.map((item) => (
+                  <Focusable
+                    key={item.id}
+                    focusKey={`SET_ADBLOCK_${item.id.toUpperCase()}`}
+                    className="choice-chip"
+                    data-active={filtering === item.id ? "true" : "false"}
+                    onEnterPress={() => void saveAdblock(item.id)}
+                  >
+                    {item.label}
+                  </Focusable>
+                ))}
+              </div>
             </>
           )}
 
@@ -712,18 +1447,18 @@ export default function SettingsView({
                   <dd>{update?.available ? "Ready" : update?.message ?? "…"}</dd>
                 </div>
                 <div>
-                  <dt>Shell UI</dt>
+                  <dt>Home screen</dt>
                   <dd>
                     {system?.shellVersion
                       ? `${system.shellVersion.slice(0, 12)}…`
                       : system?.shellReady
-                        ? "Bundled"
+                        ? "Ready"
                         : "Not ready"}
                   </dd>
                 </div>
                 {update?.remote ? (
                   <div>
-                    <dt>Channel</dt>
+                    <dt>Available</dt>
                     <dd>
                       {update.remote.version}
                       {update.remote.newer ? " · update available" : " · current"}
@@ -736,166 +1471,145 @@ export default function SettingsView({
                 <p className="panel-copy">{update.remote.notes}</p>
               ) : null}
 
-              <div className="settings-stack">
-                <label className="field-label" htmlFor="panel-url">
-                  Panel URL (shell UI sync)
-                </label>
+              <div className="button-row">
                 <Focusable
-                  as="div"
-                  focusKey="SET_PANEL"
-                  className="store-field store-field-bare"
-                  onEnterPress={() => {
-                    document.getElementById("panel-url")?.focus();
-                  }}
+                  focusKey="SET_CHECK"
+                  className="primary-btn"
+                  onEnterPress={() => void checkForUpdates()}
                 >
-                  <input
-                    id="panel-url"
-                    value={panelUrl}
-                    onChange={(e) => setPanelUrl(e.target.value)}
-                    placeholder="https://blackhole-os-panel.carlostorres.dev"
-                    aria-label="Panel URL for shell sync"
-                  />
+                  {busy ? "Checking…" : "Check for updates"}
                 </Focusable>
-                <div className="button-row">
-                  <Focusable
-                    focusKey="SET_PANEL_SAVE"
-                    className="pager-btn"
-                    onEnterPress={() => void savePanelUrl()}
-                  >
-                    Save panel URL
-                  </Focusable>
-                  <Focusable
-                    focusKey="SET_SHELL_SYNC"
-                    className="primary-btn"
-                    onEnterPress={() => void checkShellUpdate()}
-                  >
-                    {busy ? "Syncing…" : "Check for shell update"}
-                  </Focusable>
-                </div>
-                <p className="panel-copy">
-                  Downloads the hosted shell into local storage for offline use.
-                  Installed apps are not changed.
-                </p>
-
-                <label className="field-label" htmlFor="catalog-url">
-                  App store catalog URL
-                </label>
-                <Focusable
-                  as="div"
-                  focusKey="SET_CATALOG"
-                  className="store-field store-field-bare"
-                  onEnterPress={() => {
-                    document.getElementById("catalog-url")?.focus();
-                  }}
-                >
-                  <input
-                    id="catalog-url"
-                    value={catalogUrl}
-                    onChange={(e) => setCatalogUrl(e.target.value)}
-                    placeholder="https://blackhole-os-panel.carlostorres.dev/catalog/apps.json"
-                    aria-label="App store catalog URL"
-                  />
-                </Focusable>
-                <div className="button-row">
-                  <Focusable
-                    focusKey="SET_CATALOG_SAVE"
-                    className="pager-btn"
-                    onEnterPress={() => void saveCatalog()}
-                  >
-                    Save catalog URL
-                  </Focusable>
-                </div>
-                <p className="panel-copy">
-                  Hosted on your Next.js shell. Devices keep a local copy in{" "}
-                  <code>data/catalog.json</code> and refresh when online.
-                </p>
-
-                <label className="field-label" htmlFor="channel-url">
-                  Channel URL (GitHub or AWS)
-                </label>
-                <Focusable
-                  as="div"
-                  focusKey="SET_CHANNEL"
-                  className="store-field store-field-bare"
-                  onEnterPress={() => {
-                    document.getElementById("channel-url")?.focus();
-                  }}
-                >
-                  <input
-                    id="channel-url"
-                    value={channelUrl}
-                    onChange={(e) => setChannelUrl(e.target.value)}
-                    placeholder="https://…/channel.json"
-                    aria-label="OTA channel URL"
-                  />
-                </Focusable>
-                <div className="button-row">
-                  <Focusable
-                    focusKey="SET_CHANNEL_SAVE"
-                    className="pager-btn"
-                    onEnterPress={() => void saveChannel()}
-                  >
-                    Save channel
-                  </Focusable>
-                  <Focusable
-                    focusKey="SET_CHECK"
-                    className="primary-btn"
-                    onEnterPress={() => void checkForUpdates()}
-                  >
-                    {busy ? "Checking…" : "Check for updates"}
-                  </Focusable>
+                {canInstall ? (
                   <Focusable
                     focusKey="SET_INSTALL_CHANNEL"
                     className="primary-btn"
                     onEnterPress={() => void installFromChannel()}
                   >
-                    Install from channel
+                    {busy ? "Installing…" : "Install update"}
                   </Focusable>
-                </div>
-
-                <label className="field-label" htmlFor="bundle-source">
-                  Or install a path / direct .raucb URL
-                </label>
-                <div className="url-form">
-                  <Focusable
-                    as="div"
-                    focusKey="SET_BUNDLE"
-                    className="store-field store-field-bare"
-                    onEnterPress={() => {
-                      document.getElementById("bundle-source")?.focus();
-                    }}
-                  >
-                    <input
-                      id="bundle-source"
-                      value={manualSource}
-                      onChange={(e) => setManualSource(e.target.value)}
-                      placeholder="/media/usb/bundle.raucb or https://…/bundle.raucb"
-                      aria-label="Bundle path or URL"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void installManual();
-                        }
-                      }}
-                    />
-                  </Focusable>
-                  <Focusable
-                    focusKey="SET_UPDATE"
-                    className="primary-btn"
-                    onEnterPress={() => void installManual()}
-                  >
-                    Update now
-                  </Focusable>
-                </div>
-                <p className="panel-copy">
-                  Host <code>channel.json</code> + your <code>.raucb</code> on GitHub
-                  Releases or S3/CloudFront. See docs/OTA.md.
-                </p>
+                ) : null}
               </div>
+              <p className="panel-copy">
+                Checks the home screen and the system image from GitHub Releases.
+                A system update will show up here when one is published.
+              </p>
             </>
           )}
         </div>
       </div>
+
+      {wifiDialog ? (
+        <CredentialDialog
+          Focusable={Focusable}
+          title={
+            wifiDialog.kind === "join-other"
+              ? "Join other network"
+              : `Connect to ${wifiDialog.ssid}`
+          }
+          copy={
+            wifiDialog.kind === "join-other"
+              ? "Enter the network name and password."
+              : "Enter the Wi-Fi password for this network."
+          }
+          fields={
+            wifiDialog.kind === "join-other"
+              ? [
+                  {
+                    id: "wifi-dialog-ssid",
+                    focusKey: "WIFI_SSID",
+                    label: "Network name",
+                    value: wifiDialog.ssid,
+                    placeholder: "Hidden or other SSID",
+                    onChange: (value) =>
+                      setWifiDialog({ ...wifiDialog, ssid: value }),
+                  },
+                  {
+                    id: "wifi-dialog-pass",
+                    focusKey: "WIFI_PASS",
+                    label: "Password",
+                    value: wifiDialog.password,
+                    type: "password",
+                    placeholder: "Optional on open networks",
+                    onChange: (value) =>
+                      setWifiDialog({ ...wifiDialog, password: value }),
+                  },
+                ]
+              : [
+                  {
+                    id: "wifi-dialog-pass",
+                    focusKey: "WIFI_PASS",
+                    label: "Password",
+                    value: wifiDialog.password,
+                    type: "password",
+                    placeholder: "Network password",
+                    onChange: (value) =>
+                      setWifiDialog({ ...wifiDialog, password: value }),
+                  },
+                ]
+          }
+          submitLabel="Connect"
+          busyLabel="Connecting…"
+          busy={busy}
+          onClose={() => {
+            if (!busy) setWifiDialog(null);
+          }}
+          onSubmit={() => {
+            void connectWifi(wifiDialog.ssid, wifiDialog.password, {
+              closeDialog: true,
+            });
+          }}
+        />
+      ) : null}
+
+      {btDialog ? (
+        <CredentialDialog
+          Focusable={Focusable}
+          title={`Pair ${btDialog.name}`}
+          copy="Enter a PIN if the device shows one. Leave blank for Just Works pairing."
+          fields={[
+            {
+              id: "bt-dialog-pin",
+              focusKey: "BT_PIN",
+              label: "PIN / passkey",
+              value: btDialog.pin,
+              type: "password",
+              placeholder: "Optional",
+              onChange: (value) => setBtDialog({ ...btDialog, pin: value }),
+            },
+          ]}
+          submitLabel="Pair"
+          busyLabel="Pairing…"
+          busy={busy}
+          onClose={() => {
+            if (!busy) setBtDialog(null);
+          }}
+          onSubmit={() => {
+            void runBluetooth(
+              "pair",
+              {
+                address: btDialog.address,
+                pin: btDialog.pin.trim() || undefined,
+              },
+              { closeDialog: true, rowKey: `bt:${btDialog.address}` },
+            );
+          }}
+        />
+      ) : null}
+
+      {powerConfirm ? (
+        <ConfirmDialog
+          Focusable={Focusable}
+          title="Power off?"
+          copy="This TV will shut down. Use the power button on the device to turn it back on."
+          confirmLabel="Power off"
+          busyLabel="Powering off…"
+          busy={busy}
+          onClose={() => {
+            if (!busy) setPowerConfirm(false);
+          }}
+          onConfirm={() => void runPower("poweroff")}
+        />
+      ) : null}
     </section>
   );
 }

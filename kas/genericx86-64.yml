@@ -1,7 +1,7 @@
 header:
   version: 14
   includes:
-    - common.yml
+    - kas/common.yml
 
 machine: genericx86-64
 
@@ -11,3 +11,5 @@ local_conf_header:
     WKS_SEARCH_PATH:append = ":${TOPDIR}/../meta-blackhole/wic"
     IMAGE_FSTYPES:append = " ext4"
     EFI_PROVIDER = "grub-efi"
+    PACKAGECONFIG:append:pn-mesa = " va"
+    IMAGE_INSTALL:append = " libva libva-utils mesa-megadriver"

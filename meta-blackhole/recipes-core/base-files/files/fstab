@@ -1,0 +1,12 @@
+# Blackhole OS — matches sdimage-dual-blackhole-rpi.wks
+# p1 boot, p2 rootfs_a, p3 rootfs_b, p4 bhdata
+# Do not inherit meta-rauc-raspberrypi's p5/p6 (/data /home) layout.
+
+/dev/root            /                    auto       defaults              1  1
+proc                 /proc                proc       defaults              0  0
+devpts               /dev/pts             devpts     mode=0620,ptmxmode=0666,gid=5      0  0
+tmpfs                /run                 tmpfs      mode=0755,nodev,nosuid,strictatime 0  0
+tmpfs                /var/volatile        tmpfs      defaults              0  0
+
+/dev/disk/by-label/boot    /boot                vfat    defaults,nofail  0  0
+/dev/disk/by-label/bhdata  /var/lib/blackhole   ext4    defaults,nofail  0  0

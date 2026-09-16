@@ -7,7 +7,9 @@ import hashlib
 import json
 import os
 import re
+import select
 import shutil
+import struct
 import subprocess
 import tempfile
 import threading
@@ -15,6 +17,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -30,7 +33,7 @@ BUNDLED_SHELL = Path(
 SHELL_URL = os.environ.get("BLACKHOLE_SHELL_URL", "http://127.0.0.1:3000")
 DEFAULT_CHANNEL = os.environ.get(
     "BLACKHOLE_CHANNEL_URL",
-    "https://github.com/example/blackhole-os/releases/latest/download/channel.json",
+    "https://github.com/CarlosT25-png/blackhole-os/releases/latest/download/channel.json",
 )
 DEV_MODE = os.environ.get("BLACKHOLE_DEV", "1") == "1"
 DEFAULT_CATALOG_URL = os.environ.get(
@@ -53,13 +56,94 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "display": {
         "scale": 100,
         "reducedMotion": False,
+        "aspect": "auto",
+        "refreshHz": "auto",
+    },
+    "adblock": {
+        "filtering": "optimal",
+        "extensionId": "",
     },
     "network": {
         "ssid": "",
         "password": "",
         "mode": "dhcp",
     },
+    "time": {
+        "timezone": "UTC",
+        "ntp": True,
+        "autoTimezone": True,
+        "hour12": True,
+    },
+    "power": {
+        "idleSec": 0,
+    },
 }
+
+ASPECT_MODES = {
+    "auto": "preferred",
+    "16:9": "1920x1080",
+    "16:10": "1920x1200",
+    "4:3": "1600x1200",
+}
+REFRESH_RATES = {"auto", 50, 60, 75, 120, "50", "60", "75", "120"}
+FILTERING_MODES = {"none", "basic", "optimal", "complete"}
+IDLE_SECONDS = {0, 300, 900, 1800, 3600}
+ZONE_NAME_RE = re.compile(r"^(UTC|[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+)$")
+ZONE_REGION_ORDER = (
+    "UTC",
+    "America",
+    "Europe",
+    "Asia",
+    "Pacific",
+    "Australia",
+    "Africa",
+    "Atlantic",
+    "Indian",
+    "Antarctica",
+    "Etc",
+)
+INPUT_EVENT_FORMAT = struct.Struct("llHHi")
+EV_KEY = 0x01
+EV_REL = 0x02
+EV_ABS = 0x03
+POWER_LOCK = threading.Lock()
+_POWER: dict[str, Any] = {
+    "sleeping": False,
+    "last_activity": time.monotonic(),
+}
+CHROME_POLICY_BASE: dict[str, Any] = {
+    "DefaultBrowserSettingEnabled": False,
+    "BrowserSignin": 0,
+    "SyncDisabled": True,
+    "PasswordManagerEnabled": False,
+    "PasswordLeakDetectionEnabled": False,
+    "PasswordSharingEnabled": False,
+    "AutofillAddressEnabled": False,
+    "AutofillCreditCardEnabled": False,
+    "TranslateEnabled": False,
+    "DefaultNotificationsSetting": 2,
+    "DefaultPopupsSetting": 2,
+    "DefaultGeolocationSetting": 2,
+    "DefaultMediaStreamSetting": 2,
+    "PromptForDownloadLocation": False,
+    "DownloadRestrictions": 3,
+    "BookmarkBarEnabled": False,
+    "SavingBrowserHistoryDisabled": True,
+    "PromotionalTabsEnabled": False,
+    "MetricsReportingEnabled": False,
+    "SearchSuggestEnabled": False,
+    "SpellCheckServiceEnabled": False,
+}
+WESTON_OUTPUT_NAMES = ("HDMI-A-1", "HDMI-A-2", "DP-1", "DSI-1", "eDP-1")
+PLACEHOLDER_CHANNEL_URLS = {
+    "",
+    "https://github.com/example/blackhole-os/releases/latest/download/channel.json",
+}
+GEO_TZ_URLS = (
+    "https://ipapi.co/json/",
+    "https://ipwho.is/",
+    "https://worldtimeapi.org/api/ip",
+)
 
 
 def data_dir() -> Path:
@@ -119,13 +203,751 @@ def load_settings() -> dict[str, Any]:
     stored = load_json(settings_file(), {})
     if not isinstance(stored, dict):
         stored = {}
-    return deep_merge(DEFAULT_SETTINGS, stored)
+    merged = deep_merge(DEFAULT_SETTINGS, stored)
+    if str(merged.get("channelUrl") or "") in PLACEHOLDER_CHANNEL_URLS:
+        merged["channelUrl"] = DEFAULT_CHANNEL
+    return merged
 
 
 def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
     merged = deep_merge(DEFAULT_SETTINGS, settings)
+    display = merged.get("display")
+    if isinstance(display, dict):
+        aspect = str(display.get("aspect") or "auto")
+        if aspect not in ASPECT_MODES:
+            aspect = "auto"
+        display["aspect"] = aspect
+        hz = display.get("refreshHz", "auto")
+        if hz not in REFRESH_RATES:
+            hz = "auto"
+        display["refreshHz"] = "auto" if hz == "auto" else int(hz)
+        try:
+            scale = int(display.get("scale") or 100)
+        except (TypeError, ValueError):
+            scale = 100
+        display["scale"] = scale
+        display["reducedMotion"] = bool(display.get("reducedMotion"))
+        merged["display"] = display
+    adblock = merged.get("adblock")
+    if isinstance(adblock, dict):
+        filtering = str(adblock.get("filtering") or "optimal")
+        if filtering not in FILTERING_MODES:
+            filtering = "optimal"
+        adblock["filtering"] = filtering
+        adblock["extensionId"] = str(adblock.get("extensionId") or "").strip()
+        merged["adblock"] = adblock
+    time_cfg = merged.get("time")
+    if isinstance(time_cfg, dict):
+        timezone = str(time_cfg.get("timezone") or "UTC").strip()
+        if not ZONE_NAME_RE.match(timezone):
+            timezone = "UTC"
+        time_cfg["timezone"] = timezone
+        time_cfg["ntp"] = bool(time_cfg.get("ntp", True))
+        time_cfg["autoTimezone"] = bool(time_cfg.get("autoTimezone", True))
+        time_cfg["hour12"] = bool(time_cfg.get("hour12", True))
+        merged["time"] = time_cfg
+    power = merged.get("power")
+    if isinstance(power, dict):
+        try:
+            idle_sec = int(power.get("idleSec") or 0)
+        except (TypeError, ValueError):
+            idle_sec = 0
+        if idle_sec not in IDLE_SECONDS:
+            idle_sec = 0
+        power["idleSec"] = idle_sec
+        merged["power"] = power
+    if str(merged.get("channelUrl") or "") in PLACEHOLDER_CHANNEL_URLS:
+        merged["channelUrl"] = DEFAULT_CHANNEL
     save_json(settings_file(), merged)
     return merged
+
+
+def persist_settings(patch: dict[str, Any]) -> dict[str, Any]:
+    previous = load_settings()
+    saved = save_settings(deep_merge(previous, patch))
+    apply_runtime_settings(previous, saved)
+    return saved
+
+
+def weston_ini_path() -> Path:
+    return data_dir() / "weston.ini"
+
+
+def weston_config_dir() -> Path:
+    return data_dir() / "weston"
+
+
+def weston_mode_line(display: dict[str, Any]) -> str:
+    aspect = str(display.get("aspect") or "auto")
+    hz = display.get("refreshHz", "auto")
+    size = ASPECT_MODES.get(aspect, "preferred")
+    if size == "preferred":
+        if hz == "auto":
+            return "preferred"
+        return f"preferred@{int(hz)}"
+    if hz == "auto":
+        return size
+    return f"{size}@{int(hz)}"
+
+
+def weston_repaint_window(display: dict[str, Any]) -> int:
+    hz = display.get("refreshHz", "auto")
+    if hz == "auto":
+        return 16
+    try:
+        rate = int(hz)
+    except (TypeError, ValueError):
+        return 16
+    if rate <= 0:
+        return 16
+    return max(8, min(22, round(1000 / rate)))
+
+
+def render_weston_ini(display: dict[str, Any]) -> str:
+    mode = weston_mode_line(display)
+    repaint = weston_repaint_window(display)
+    lines = [
+        "[core]",
+        "idle-time=0",
+        "require-input=false",
+        "shell=kiosk-shell.so",
+        f"repaint-window={repaint}",
+        "",
+        "[shell]",
+        "locking=false",
+        "panel-position=none",
+        "background-color=0xFF06070B",
+        "",
+        "[libinput]",
+        "enable-tap=true",
+        "",
+    ]
+    for name in WESTON_OUTPUT_NAMES:
+        lines.extend(["[output]", f"name={name}", f"mode={mode}", ""])
+    return "\n".join(lines) + "\n"
+
+
+def apply_weston_display(settings: dict[str, Any], restart: bool) -> None:
+    display = settings.get("display")
+    if not isinstance(display, dict):
+        return
+    payload = render_weston_ini(display)
+    targets = [weston_ini_path(), weston_config_dir() / "weston.ini"]
+    for path in targets:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(payload, encoding="utf-8")
+        except OSError:
+            pass
+    etc = Path("/etc/xdg/weston/weston.ini")
+    if etc.parent.is_dir():
+        try:
+            etc.write_text(payload, encoding="utf-8")
+        except OSError:
+            pass
+    if not restart or DEV_MODE:
+        return
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return
+    try:
+        subprocess.run(
+            [systemctl, "restart", "weston.service"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def chrome_policy_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    env_dir = os.environ.get("BLACKHOLE_CHROME_POLICY_DIR")
+    if env_dir:
+        dirs.append(Path(env_dir))
+    dirs.extend(
+        [
+            Path("/etc/chromium/policies/managed"),
+            Path("/etc/opt/chrome/policies/managed"),
+            data_dir() / "chromium" / "policies" / "managed",
+            ROOT / "scripts" / ".chromium-profile" / "policies" / "managed",
+        ]
+    )
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in dirs:
+        resolved = path
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def write_chrome_policies(settings: dict[str, Any]) -> None:
+    policy = dict(CHROME_POLICY_BASE)
+    adblock = settings.get("adblock") if isinstance(settings.get("adblock"), dict) else {}
+    filtering = str(adblock.get("filtering") or "optimal")
+    if filtering not in FILTERING_MODES:
+        filtering = "optimal"
+    extension_id = str(adblock.get("extensionId") or "").strip()
+    if extension_id:
+        policy["3rdparty"] = {
+            "extensions": {
+                extension_id: {
+                    "defaultFiltering": filtering,
+                    "disableFirstRunPage": True,
+                }
+            }
+        }
+    payload = json.dumps(policy, indent=2) + "\n"
+    for directory in chrome_policy_dirs():
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "blackhole.json").write_text(payload, encoding="utf-8")
+        except OSError:
+            continue
+    seed_chromium_preferences()
+
+
+def seed_chromium_preferences() -> None:
+    candidates = [
+        data_dir() / "chromium" / "Default" / "Preferences",
+        ROOT / "scripts" / ".chromium-profile" / "Default" / "Preferences",
+    ]
+    for prefs_path in candidates:
+        try:
+            prefs_path.parent.mkdir(parents=True, exist_ok=True)
+            prefs: dict[str, Any] = {}
+            if prefs_path.exists():
+                loaded = load_json(prefs_path, {})
+                if isinstance(loaded, dict):
+                    prefs = loaded
+            prefs["credentials_enable_service"] = False
+            profile = prefs.get("profile")
+            if not isinstance(profile, dict):
+                profile = {}
+            profile["password_manager_enabled"] = False
+            prefs["profile"] = profile
+            save_json(prefs_path, prefs)
+        except OSError:
+            continue
+
+
+def apply_runtime_settings(previous: dict[str, Any], saved: dict[str, Any]) -> None:
+    write_chrome_policies(saved)
+    prev_display = previous.get("display") if isinstance(previous.get("display"), dict) else {}
+    new_display = saved.get("display") if isinstance(saved.get("display"), dict) else {}
+    if (prev_display.get("aspect"), prev_display.get("refreshHz")) != (
+        new_display.get("aspect"),
+        new_display.get("refreshHz"),
+    ):
+        apply_weston_display(saved, restart=not DEV_MODE)
+    prev_time = previous.get("time") if isinstance(previous.get("time"), dict) else {}
+    new_time = saved.get("time") if isinstance(saved.get("time"), dict) else {}
+    if (prev_time.get("timezone"), prev_time.get("ntp")) != (
+        new_time.get("timezone"),
+        new_time.get("ntp"),
+    ):
+        apply_time_settings(saved)
+    if bool(new_time.get("autoTimezone", True)) and not bool(prev_time.get("autoTimezone")):
+        threading.Thread(target=apply_auto_timezone, daemon=True).start()
+
+
+def available_zone_names() -> list[str]:
+    names: set[str] = set()
+    try:
+        from zoneinfo import available_timezones
+
+        names.update(available_timezones())
+    except Exception:
+        pass
+    root = Path("/usr/share/zoneinfo")
+    skip_top = {"posix", "right", "posixrules"}
+    if root.is_dir():
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            top = rel.split("/", 1)[0]
+            if top in skip_top or rel.endswith(".tab") or rel.endswith(".list"):
+                continue
+            names.add(rel)
+    names.add("UTC")
+    return sorted(zone for zone in names if ZONE_NAME_RE.match(zone))
+
+
+def grouped_timezones() -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for zone in available_zone_names():
+        region = zone.split("/", 1)[0] if "/" in zone else zone
+        grouped.setdefault(region, []).append(zone)
+    ordered: dict[str, list[str]] = {}
+    for region in ZONE_REGION_ORDER:
+        if region in grouped:
+            ordered[region] = grouped.pop(region)
+    return ordered
+
+
+def _zoneinfo(name: str):
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def current_clock(timezone_name: str) -> tuple[str, dict[str, int]]:
+    tz = _zoneinfo(timezone_name)
+    now = datetime.now(tz) if tz is not None else datetime.now().astimezone()
+    now = now.replace(microsecond=0)
+    return now.isoformat(), {
+        "year": now.year,
+        "month": now.month,
+        "day": now.day,
+        "hour": now.hour,
+        "minute": now.minute,
+    }
+
+
+def timedatectl_show() -> dict[str, str]:
+    binary = shutil.which("timedatectl")
+    if not binary:
+        return {}
+    try:
+        completed = _run_cmd([binary, "show"], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    parsed: dict[str, str] = {}
+    for line in (completed.stdout or "").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def parse_clock_string(value: str) -> str:
+    text = value.strip().replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    text = re.sub(r"[+-]\d{2}:\d{2}$", "", text)
+    text = text.split(".", 1)[0].strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$", text):
+        text += ":00"
+    if not re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", text):
+        raise ValueError("Time must be YYYY-MM-DDTHH:MM[:SS]")
+    return text
+
+
+def kick_timesyncd() -> None:
+    settings = load_settings()
+    time_cfg = settings.get("time") if isinstance(settings.get("time"), dict) else {}
+    if not bool(time_cfg.get("ntp", True)):
+        return
+    if DEV_MODE:
+        return
+    binary = shutil.which("timedatectl")
+    if binary:
+        try:
+            _run_cmd([binary, "set-ntp", "true"], timeout=8)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return
+    try:
+        _run_cmd([systemctl, "try-restart", "systemd-timesyncd.service"], timeout=8)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _parse_geo_timezone(payload: Any) -> str | None:
+    zone: Any = None
+    if isinstance(payload, str):
+        zone = payload.strip()
+    elif isinstance(payload, dict):
+        zone = payload.get("timezone")
+        if isinstance(zone, dict):
+            zone = zone.get("id") or zone.get("name")
+        if not zone:
+            zone = payload.get("time_zone")
+    zone_name = str(zone or "").strip()
+    if ZONE_NAME_RE.match(zone_name):
+        return zone_name
+    return None
+
+
+def detect_timezone_from_network() -> str | None:
+    headers = {"Accept": "application/json", "User-Agent": "blackholed/0.1"}
+    for url in GEO_TZ_URLS:
+        try:
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=8) as response:
+                body = response.read().decode("utf-8", errors="replace")
+        except (OSError, urllib.error.URLError, TimeoutError):
+            continue
+        try:
+            payload: Any = json.loads(body)
+        except json.JSONDecodeError:
+            payload = body
+        zone = _parse_geo_timezone(payload)
+        if zone:
+            return zone
+    return None
+
+
+def apply_auto_timezone() -> str | None:
+    settings = load_settings()
+    time_cfg = settings.get("time") if isinstance(settings.get("time"), dict) else {}
+    if not bool(time_cfg.get("autoTimezone", True)):
+        return None
+    detected = detect_timezone_from_network()
+    if not detected:
+        return None
+    if detected == str(time_cfg.get("timezone") or ""):
+        return detected
+    persist_settings({"time": {"timezone": detected}})
+    return detected
+
+
+def apply_time_settings(
+    settings: dict[str, Any],
+    *,
+    set_clock: str | None = None,
+) -> dict[str, Any]:
+    time_cfg = settings.get("time") if isinstance(settings.get("time"), dict) else {}
+    timezone = str(time_cfg.get("timezone") or "UTC")
+    ntp = bool(time_cfg.get("ntp", True))
+    if DEV_MODE:
+        return {
+            "ok": True,
+            "backend": "dev",
+            "message": "Desktop simulation",
+        }
+    binary = shutil.which("timedatectl")
+    if not binary:
+        return {
+            "ok": False,
+            "backend": "none",
+            "message": "timedatectl not available",
+        }
+    try:
+        tz_result = _run_cmd([binary, "set-timezone", timezone], timeout=8)
+        if tz_result.returncode != 0:
+            detail = (tz_result.stderr or tz_result.stdout or "timezone failed").strip()
+            raise ValueError(detail)
+        if set_clock:
+            _run_cmd([binary, "set-ntp", "false"], timeout=8)
+            clock_result = _run_cmd([binary, "set-time", set_clock], timeout=8)
+            if clock_result.returncode != 0:
+                detail = (clock_result.stderr or clock_result.stdout or "set-time failed").strip()
+                raise ValueError(detail)
+        else:
+            ntp_result = _run_cmd(
+                [binary, "set-ntp", "true" if ntp else "false"],
+                timeout=8,
+            )
+            if ntp_result.returncode != 0:
+                detail = (ntp_result.stderr or ntp_result.stdout or "set-ntp failed").strip()
+                raise ValueError(detail)
+            if ntp:
+                kick_timesyncd()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(str(exc)) from exc
+    return {"ok": True, "backend": "timedatectl"}
+
+
+def time_status(include_zones: bool = False) -> dict[str, Any]:
+    settings = load_settings()
+    time_cfg = settings.get("time") if isinstance(settings.get("time"), dict) else {}
+    timezone = str(time_cfg.get("timezone") or "UTC")
+    ntp = bool(time_cfg.get("ntp", True))
+    auto_timezone = bool(time_cfg.get("autoTimezone", True))
+    hour12 = bool(time_cfg.get("hour12", True))
+    shown = timedatectl_show()
+    backend = "timedatectl" if shown else ("dev" if DEV_MODE else "none")
+    if shown.get("Timezone") and not auto_timezone:
+        timezone = shown["Timezone"]
+    synchronized = str(shown.get("NTPSynchronized") or "").lower() in {"yes", "1", "true"}
+    ntp_active = str(shown.get("NTP") or "").lower() in {"yes", "1", "true"} if shown else ntp
+    iso, clock = current_clock(timezone)
+    online = bool(network_status(settings).get("connected"))
+    if ntp and not online:
+        sync_label = "waiting"
+    elif ntp and synchronized:
+        sync_label = "synced"
+    elif ntp:
+        sync_label = "pending"
+    else:
+        sync_label = "off"
+    payload: dict[str, Any] = {
+        "timezone": timezone,
+        "ntp": ntp,
+        "autoTimezone": auto_timezone,
+        "ntpActive": ntp_active,
+        "synchronized": synchronized,
+        "sync": sync_label,
+        "iso": iso,
+        "clock": clock,
+        "hour12": hour12,
+        "networkOnline": online,
+        "backend": backend,
+    }
+    if include_zones:
+        payload["zones"] = grouped_timezones()
+    return payload
+
+
+def note_activity() -> None:
+    with POWER_LOCK:
+        _POWER["last_activity"] = time.monotonic()
+        sleeping = bool(_POWER["sleeping"])
+    if sleeping:
+        apply_display_wake()
+
+
+def _drm_connectors() -> list[Path]:
+    root = Path("/sys/class/drm")
+    if not root.is_dir():
+        return []
+    found: list[Path] = []
+    for path in sorted(root.iterdir()):
+        dpms = path / "dpms"
+        if not dpms.exists() or "-" not in path.name:
+            continue
+        found.append(path)
+    return found
+
+
+def _set_drm_dpms(value: str) -> bool:
+    wrote = False
+    for path in _drm_connectors():
+        try:
+            (path / "dpms").write_text(f"{value}\n", encoding="utf-8")
+            wrote = True
+        except OSError:
+            continue
+    return wrote
+
+
+def _vcgencmd_display_power(on: bool) -> bool:
+    binary = shutil.which("vcgencmd")
+    if not binary:
+        return False
+    try:
+        completed = _run_cmd([binary, "display_power", "1" if on else "0"], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def apply_display_sleep() -> dict[str, Any]:
+    with POWER_LOCK:
+        _POWER["sleeping"] = True
+    if DEV_MODE:
+        return {
+            "ok": True,
+            "action": "sleep",
+            "backend": "dev",
+            "message": "Would sleep (desktop simulation)",
+        }
+    if _vcgencmd_display_power(False):
+        return {
+            "ok": True,
+            "action": "sleep",
+            "backend": "vcgencmd",
+            "message": "Display off",
+        }
+    if _set_drm_dpms("Off"):
+        return {
+            "ok": True,
+            "action": "sleep",
+            "backend": "drm",
+            "message": "Display off",
+        }
+    return {
+        "ok": False,
+        "action": "sleep",
+        "backend": "none",
+        "message": "Could not turn the display off",
+    }
+
+
+def apply_display_wake() -> dict[str, Any]:
+    with POWER_LOCK:
+        _POWER["sleeping"] = False
+        _POWER["last_activity"] = time.monotonic()
+    if DEV_MODE:
+        return {
+            "ok": True,
+            "action": "wake",
+            "backend": "dev",
+            "message": "Would wake (desktop simulation)",
+        }
+    if _vcgencmd_display_power(True):
+        return {
+            "ok": True,
+            "action": "wake",
+            "backend": "vcgencmd",
+            "message": "Display on",
+        }
+    if _set_drm_dpms("On"):
+        return {
+            "ok": True,
+            "action": "wake",
+            "backend": "drm",
+            "message": "Display on",
+        }
+    return {
+        "ok": True,
+        "action": "wake",
+        "backend": "none",
+        "message": "Wake requested",
+    }
+
+
+def apply_poweroff() -> dict[str, Any]:
+    if DEV_MODE:
+        return {
+            "ok": True,
+            "action": "poweroff",
+            "backend": "dev",
+            "message": "Would power off (desktop simulation)",
+        }
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        raise ValueError("systemctl not available")
+
+    def _halt() -> None:
+        time.sleep(0.4)
+        try:
+            _run_cmd([systemctl, "poweroff"], timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    threading.Thread(target=_halt, daemon=True).start()
+    return {
+        "ok": True,
+        "action": "poweroff",
+        "backend": "systemctl",
+        "message": "Powering off",
+    }
+
+
+def power_action(action: str) -> dict[str, Any]:
+    name = action.strip().lower()
+    if name == "activity":
+        note_activity()
+        return {"ok": True, "action": "activity"}
+    if name == "sleep":
+        return apply_display_sleep()
+    if name == "wake":
+        return apply_display_wake()
+    if name in {"poweroff", "shutdown"}:
+        return apply_poweroff()
+    raise ValueError("action must be sleep, wake, poweroff, or activity")
+
+
+def power_status() -> dict[str, Any]:
+    settings = load_settings()
+    power = settings.get("power") if isinstance(settings.get("power"), dict) else {}
+    with POWER_LOCK:
+        sleeping = bool(_POWER["sleeping"])
+        last_activity = _POWER["last_activity"]
+    return {
+        "idleSec": int(power.get("idleSec") or 0),
+        "sleeping": sleeping,
+        "idleFor": int(max(0, time.monotonic() - last_activity)),
+        "backend": "dev" if DEV_MODE else "system",
+    }
+
+
+def _open_input_devices() -> dict[int, str]:
+    opened: dict[int, str] = {}
+    root = Path("/dev/input")
+    if not root.is_dir():
+        return opened
+    for path in sorted(root.glob("event*")):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue
+        opened[fd] = str(path)
+    return opened
+
+
+def _input_watch_loop() -> None:
+    opened = _open_input_devices()
+    last_scan = time.monotonic()
+    try:
+        while True:
+            now = time.monotonic()
+            if now - last_scan >= 10:
+                for fd in list(opened):
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                opened = _open_input_devices()
+                last_scan = now
+            if not opened:
+                time.sleep(1)
+                continue
+            try:
+                ready, _, _ = select.select(list(opened), [], [], 1.0)
+            except (OSError, ValueError):
+                time.sleep(0.5)
+                continue
+            for fd in ready:
+                try:
+                    payload = os.read(fd, INPUT_EVENT_FORMAT.size * 8)
+                except OSError:
+                    continue
+                size = INPUT_EVENT_FORMAT.size
+                for offset in range(0, len(payload) - size + 1, size):
+                    _sec, _usec, etype, _code, _value = INPUT_EVENT_FORMAT.unpack_from(
+                        payload, offset
+                    )
+                    if etype in {EV_KEY, EV_REL, EV_ABS}:
+                        note_activity()
+                        break
+    finally:
+        for fd in opened:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _idle_watch_loop() -> None:
+    while True:
+        time.sleep(1)
+        settings = load_settings()
+        power = settings.get("power") if isinstance(settings.get("power"), dict) else {}
+        try:
+            idle_sec = int(power.get("idleSec") or 0)
+        except (TypeError, ValueError):
+            idle_sec = 0
+        if idle_sec <= 0:
+            continue
+        with POWER_LOCK:
+            sleeping = bool(_POWER["sleeping"])
+            last_activity = _POWER["last_activity"]
+        if sleeping:
+            continue
+        if time.monotonic() - last_activity >= idle_sec:
+            apply_display_sleep()
+
+
+def start_power_watchers() -> None:
+    threading.Thread(target=_idle_watch_loop, name="bh-idle", daemon=True).start()
+    if DEV_MODE:
+        return
+    threading.Thread(target=_input_watch_loop, name="bh-input", daemon=True).start()
 
 
 def load_apps() -> list[dict[str, Any]]:
@@ -527,10 +1349,15 @@ def is_newer(remote: str, local: str) -> bool:
 
 
 def fetch_json(url: str, timeout: float = 20.0) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "blackholed/0.1"},
+    )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise ValueError(f"Could not fetch {url}: {exc}") from exc
     try:
@@ -761,11 +1588,15 @@ def apply_wifi(ssid: str, password: str) -> dict[str, Any]:
             if completed.returncode != 0:
                 detail = (completed.stderr or completed.stdout or "nmcli failed").strip()
                 raise ValueError(detail)
+            kick_timesyncd()
+            threading.Thread(target=apply_auto_timezone, daemon=True).start()
             return {"ok": True, "message": f"Connected to {ssid}", "backend": "nmcli"}
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ValueError(str(exc)) from exc
 
     if DEV_MODE:
+        kick_timesyncd()
+        threading.Thread(target=apply_auto_timezone, daemon=True).start()
         return {
             "ok": True,
             "message": f"Saved {ssid or 'network'} (desktop simulation)",
@@ -971,10 +1802,101 @@ def bluetooth_status() -> dict[str, Any]:
     }
 
 
+def pair_bluetooth_with_pin(addr: str, pin: str) -> tuple[int, str]:
+    """Drive bluetoothctl with a KeyboardDisplay agent and feed a PIN/passkey."""
+    binary = shutil.which("bluetoothctl")
+    if not binary:
+        return 127, "bluetoothctl not installed"
+    pin = pin.strip()
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            [binary],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except OSError as exc:
+        return 1, str(exc)
+
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+    commands = [
+        "agent KeyboardDisplay\n",
+        "default-agent\n",
+        f"pair {addr}\n",
+    ]
+    for command in commands:
+        try:
+            proc.stdin.write(command)
+            proc.stdin.flush()
+        except OSError as exc:
+            proc.kill()
+            return 1, str(exc)
+
+    output_chunks: list[str] = []
+    deadline = time.time() + 40
+    pin_sent = False
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None and not pin_sent:
+                break
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+                continue
+            output_chunks.append(line)
+            lowered = line.lower()
+            if not pin_sent and (
+                "passkey" in lowered
+                or "pin code" in lowered
+                or "enter pin" in lowered
+                or "request" in lowered and "pin" in lowered
+            ):
+                try:
+                    proc.stdin.write(f"{pin}\n")
+                    proc.stdin.flush()
+                    pin_sent = True
+                except OSError as exc:
+                    proc.kill()
+                    return 1, str(exc)
+            if "pairing successful" in lowered or "already exists" in lowered:
+                break
+            if "failed" in lowered and "pair" in lowered:
+                break
+        try:
+            proc.stdin.write("quit\n")
+            proc.stdin.flush()
+        except OSError:
+            pass
+        try:
+            remaining, _ = proc.communicate(timeout=5)
+            if remaining:
+                output_chunks.append(remaining)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            remaining, _ = proc.communicate(timeout=2)
+            if remaining:
+                output_chunks.append(remaining)
+    except Exception as exc:  # noqa: BLE001
+        proc.kill()
+        return 1, str(exc)
+    text = "".join(output_chunks).strip()
+    ok = (
+        "pairing successful" in text.lower()
+        or "already exists" in text.lower()
+        or (pin_sent and "failed" not in text.lower())
+    )
+    return (0 if ok else 1), text
+
+
 def bluetooth_action(
     action: str,
     address: str = "",
     powered: bool | None = None,
+    pin: str | None = None,
 ) -> dict[str, Any]:
     action = action.strip().lower()
     if action not in {"power", "scan", "pair", "connect", "disconnect", "remove"}:
@@ -1016,7 +1938,11 @@ def bluetooth_action(
     if action == "pair":
         if not status.get("powered"):
             raise ValueError("Turn Bluetooth on first")
-        pair_code, pair_out = run_bluetoothctl("pair", addr, timeout=40)
+        pin_value = (pin or "").strip()
+        if pin_value:
+            pair_code, pair_out = pair_bluetooth_with_pin(addr, pin_value)
+        else:
+            pair_code, pair_out = run_bluetoothctl("pair", addr, timeout=40)
         run_bluetoothctl("trust", addr, timeout=12)
         conn_code, conn_out = run_bluetoothctl("connect", addr, timeout=20)
         if pair_code != 0 and "already" not in pair_out.lower() and conn_code != 0:
@@ -1083,7 +2009,17 @@ def check_channel(channel_url: str | None = None) -> dict[str, Any]:
     url = (channel_url or settings.get("channelUrl") or DEFAULT_CHANNEL).strip()
     if not url:
         raise ValueError("No channel URL configured")
-    channel = fetch_json(url)
+    status = update_status_payload()
+    status["channelUrl"] = url
+    try:
+        channel = fetch_json(url)
+    except ValueError as exc:
+        detail = str(exc)
+        if "404" in detail or "Not Found" in detail:
+            status["message"] = "No system update published yet"
+        else:
+            status["message"] = "Could not reach updates"
+        return status
     remote_version = str(channel.get("version") or "")
     compatible = str(channel.get("compatible") or "")
     bundle_url = str(channel.get("bundleUrl") or "")
@@ -1092,9 +2028,7 @@ def check_channel(channel_url: str | None = None) -> dict[str, Any]:
     if not remote_version or not bundle_url:
         raise ValueError("channel.json needs version and bundleUrl")
 
-    status = update_status_payload()
     newer = is_newer(remote_version, VERSION)
-    status["channelUrl"] = url
     status["remote"] = {
         "version": remote_version,
         "bundleUrl": bundle_url,
@@ -1233,6 +2167,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"apps": load_apps()})
             if path == "/settings":
                 return self._send(200, {"settings": load_settings()})
+            if path == "/time":
+                return self._send(200, time_status(include_zones=True))
+            if path == "/power":
+                return self._send(200, power_status())
             if path == "/network/scan":
                 settings = load_settings()
                 payload = scan_wifi(settings)
@@ -1257,6 +2195,9 @@ class Handler(BaseHTTPRequestHandler):
                             "enabled": True,
                             "extension": "uBlock Origin Lite",
                             "note": "Loaded via --load-extension (Manifest V3)",
+                            "filtering": (settings.get("adblock") or {}).get(
+                                "filtering", "optimal"
+                            ),
                         },
                         "dev": DEV_MODE,
                         "dataDir": str(data_dir()),
@@ -1267,6 +2208,9 @@ class Handler(BaseHTTPRequestHandler):
                         "shellSynced": status.get("shellSynced"),
                         "shellReady": status.get("shellReady"),
                         "display": settings.get("display"),
+                        "adblock": settings.get("adblock"),
+                        "time": time_status(),
+                        "power": power_status(),
                     },
                 )
             if path == "/update":
@@ -1292,11 +2236,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/settings":
                 body = self._read_json()
-                current = load_settings()
                 patch = body.get("settings") if isinstance(body.get("settings"), dict) else body
                 if not isinstance(patch, dict):
                     return self._send(400, {"detail": "settings object required"})
-                saved = save_settings(deep_merge(current, patch))
+                saved = persist_settings(patch)
                 return self._send(200, {"settings": saved})
             return self._send(404, {"detail": f"Not found: {path}"})
         except ValueError as exc:
@@ -1334,12 +2277,43 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/settings":
                 body = self._read_json()
-                current = load_settings()
                 patch = body.get("settings") if isinstance(body.get("settings"), dict) else body
                 if not isinstance(patch, dict):
                     return self._send(400, {"detail": "settings object required"})
-                saved = save_settings(deep_merge(current, patch))
+                saved = persist_settings(patch)
                 return self._send(200, {"settings": saved})
+
+            if path == "/time":
+                body = self._read_json() if int(self.headers.get("Content-Length", "0") or "0") else {}
+                patch_time: dict[str, Any] = {}
+                if "timezone" in body:
+                    patch_time["timezone"] = str(body.get("timezone") or "UTC")
+                    if "autoTimezone" not in body:
+                        patch_time["autoTimezone"] = False
+                if "ntp" in body:
+                    patch_time["ntp"] = bool(body.get("ntp"))
+                if "autoTimezone" in body:
+                    patch_time["autoTimezone"] = bool(body.get("autoTimezone"))
+                if "hour12" in body:
+                    patch_time["hour12"] = bool(body.get("hour12"))
+                iso = str(body.get("iso") or "").strip()
+                if iso:
+                    patch_time["ntp"] = False
+                if not patch_time:
+                    return self._send(400, {"detail": "timezone, ntp, autoTimezone, hour12, or iso required"})
+                saved = persist_settings({"time": patch_time})
+                if iso:
+                    apply_time_settings(saved, set_clock=parse_clock_string(iso))
+                return self._send(200, {"ok": True, "time": time_status(include_zones=True), "settings": saved})
+
+            if path == "/power":
+                body = self._read_json() if int(self.headers.get("Content-Length", "0") or "0") else {}
+                action = str(body.get("action") or "").strip()
+                if not action:
+                    return self._send(400, {"detail": "action is required"})
+                result = power_action(action)
+                result["power"] = power_status()
+                return self._send(200, result)
 
             if path == "/network":
                 body = self._read_json()
@@ -1347,13 +2321,15 @@ class Handler(BaseHTTPRequestHandler):
                 password = str(body.get("password", ""))
                 if not ssid:
                     return self._send(400, {"detail": "ssid is required"})
-                settings = load_settings()
-                settings["network"] = {
-                    "ssid": ssid,
-                    "password": password,
-                    "mode": str(body.get("mode") or "dhcp"),
-                }
-                save_settings(settings)
+                settings = persist_settings(
+                    {
+                        "network": {
+                            "ssid": ssid,
+                            "password": password,
+                            "mode": str(body.get("mode") or "dhcp"),
+                        }
+                    }
+                )
                 result = apply_wifi(ssid, password)
                 return self._send(
                     200,
@@ -1372,10 +2348,12 @@ class Handler(BaseHTTPRequestHandler):
                 powered = body.get("powered")
                 if powered is not None:
                     powered = bool(powered)
+                pin = body.get("pin")
                 result = bluetooth_action(
                     action,
                     str(body.get("address") or ""),
                     powered if isinstance(powered, bool) else None,
+                    str(pin) if pin is not None else None,
                 )
                 return self._send(200, result)
 
@@ -1484,7 +2462,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     data_dir()
-    save_settings(load_settings())
+    settings = save_settings(load_settings())
+    apply_weston_display(settings, restart=False)
+    write_chrome_policies(settings)
+    apply_time_settings(settings)
+    start_power_watchers()
+    threading.Thread(target=apply_auto_timezone, daemon=True).start()
     ensure_catalog_cache()
     ensure_shell_overlay()
     # Best-effort remote refresh at startup; offline keeps local cache/overlay.

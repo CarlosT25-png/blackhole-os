@@ -1,19 +1,17 @@
 header:
   version: 14
   includes:
-    - common.yml
+    - kas/common.yml
 
 machine: raspberrypi5
-
-repos:
-  meta-lts-mixins:
-    url: git://git.yoctoproject.org/meta-lts-mixins
-    branch: scarthgap/u-boot
 
 local_conf_header:
   blackhole-rpi5: |
     ENABLE_UART = "1"
-    RPI_USE_U_BOOT = "1"
+    # Match Pi 4 bring-up: skip U-Boot until HDMI/RAUC boot is validated.
+    RPI_USE_U_BOOT = "0"
+    CMDLINE:append = " console=tty1 cma=256M"
+    DISABLE_OVERSCAN = "1"
     WKS_FILE = "sdimage-dual-blackhole-rpi.wks"
     WKS_SEARCH_PATH:append = ":${TOPDIR}/../meta-blackhole/wic"
     IMAGE_FSTYPES:append = " ext4"

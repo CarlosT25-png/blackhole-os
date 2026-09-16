@@ -6,9 +6,12 @@ Wants=nginx.service blackholed.service
 
 [Service]
 Type=simple
-Environment=XDG_RUNTIME_DIR=/run/user/0
-Environment=WAYLAND_DISPLAY=wayland-1
+# weston.socket listens on /run/wayland-0 (see weston-init).
+Environment=XDG_RUNTIME_DIR=/run
+Environment=WAYLAND_DISPLAY=wayland-0
 Environment=BLACKHOLE_SHELL_URL=http://127.0.0.1/
+Environment=BLACKHOLE_UI_SCALE=1.0
+Environment=LD_LIBRARY_PATH=/opt/chromium/lib:/opt/chromium
 ExecStartPre=/bin/sleep 2
 ExecStart=/usr/bin/chromium-kiosk
 Restart=on-failure

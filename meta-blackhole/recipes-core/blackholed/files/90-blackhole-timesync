@@ -1,0 +1,35 @@
+#!/bin/sh
+# Kick systemd-timesyncd when a link comes up if automatic time is enabled.
+
+ACTION=$2
+case "$ACTION" in
+  up|connectivity-change|dhcp4-change|dhcp6-change) ;;
+  *) exit 0 ;;
+esac
+
+SETTINGS="${BLACKHOLE_DATA:-/var/lib/blackhole}/settings.json"
+if [ -f "$SETTINGS" ]; then
+  python3 - "$SETTINGS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+ntp = True
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    time_cfg = data.get("time") if isinstance(data, dict) else {}
+    if isinstance(time_cfg, dict):
+        ntp = bool(time_cfg.get("ntp", True))
+except Exception:
+    ntp = True
+raise SystemExit(0 if ntp else 1)
+PY
+  if [ $? -ne 0 ]; then
+    exit 0
+  fi
+fi
+
+timedatectl set-ntp true >/dev/null 2>&1 || true
+systemctl try-restart systemd-timesyncd.service >/dev/null 2>&1 || true
+exit 0

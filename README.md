@@ -49,9 +49,8 @@ remote list differs. Offline Store + installs use the local cache.
 
 Default `catalogUrl` is
 `https://blackhole-os-panel.carlostorres.dev/catalog/apps.json`.
-Change it under **Settings → Updates**, or set `BLACKHOLE_CATALOG_URL`.
-Offline devices keep using the bundled/`data/catalog.json` cache until they
-can reach that host.
+Override with `BLACKHOLE_CATALOG_URL`. Offline devices keep using the
+bundled/`data/catalog.json` cache until they can reach that host.
 
 Installed apps remain separate in `data/apps.json` and are not overwritten by
 catalog sync.
@@ -72,7 +71,7 @@ On the TV, nginx serves `/var/lib/blackhole/shell` (seeded once from the image).
 downloads each file into that overlay. Offline boots keep the last synced UI.
 
 - Default panel URL: `https://blackhole-os-panel.carlostorres.dev`
-- Settings → Updates → **Check for shell update**, or `POST /shell/sync`
+- Settings → Updates → **Check for updates**, or `POST /shell/sync`
 - Env: `BLACKHOLE_SHELL_UPDATE_URL`
 
 Chromium still opens `http://127.0.0.1/` (local), not Vercel, so the UI works offline.
@@ -94,7 +93,7 @@ cd apps/shell
 npm install
 npm run dev
 
-# Terminal 3 — Chromium kiosk (optional)
+# Terminal 3 — Chromium kiosk (optional; do not use sudo)
 ./scripts/dev-kiosk.sh
 ```
 
@@ -102,8 +101,47 @@ Open http://127.0.0.1:3000 for the shell. Arrow keys + Enter navigate.
 
 `./scripts/dev-kiosk.sh` uses **Chrome for Testing** (not branded Google Chrome),
 because Chrome 137+ ignores `--load-extension`. On first run it may download
-that browser. In the kiosk, Esc / the top-right **Blackhole** chip return home;
+that browser. **Do not `sudo` it** — Chrome as root often shows a blank white
+window. The script refuses root, checks that the shell on `:3000` actually
+responds, and starts `npm run dev` if nothing is listening. If you already
+ran it with sudo, fix the profile then retry:
+
+```bash
+sudo chown -R "$USER" scripts/.chromium-profile
+./scripts/dev-kiosk.sh
+```
+
+In the kiosk, Esc / the top-right **Blackhole** chip return home;
 confirm extensions at `chrome://extensions`.
+
+## Build a Raspberry Pi flash image (macOS)
+
+Yocto must run in Linux. On a Mac, use Docker.
+
+The image uses a **prebuilt Chromium** (Chrome for Testing linux-arm64), so you
+do **not** compile the browser from source. First builds are usually **about
+1–3 hours** instead of overnight. To refresh the pinned browser:
+
+```bash
+./scripts/fetch-chromium-bin.sh Stable
+```
+
+1. Open **Docker Desktop** → Settings → Resources → **Memory 8 GB+** (16 GB is still nicer).
+2. Build (Pi 4 64-bit by default; use `pi5` for Pi 5):
+
+```bash
+./scripts/build-rpi-image.sh pi4
+# ./scripts/build-rpi-image.sh pi5
+```
+
+3. Flash the resulting `.wic` (example):
+
+```bash
+diskutil list
+diskutil unmountDisk /dev/diskN
+sudo dd if=path/to/blackhole-image-raspberrypi4-64.rootfs.wic of=/dev/rdiskN bs=4m status=progress
+sync
+```
 
 ## Building images with Yocto (kas)
 
@@ -131,8 +169,9 @@ See **[docs/OTA.md](docs/OTA.md)** for the full flow (GitHub Releases and AWS S3
 # On the build host
 bitbake blackhole-bundle
 
-# Publish channel.json + .raucb to GitHub Releases or S3, then on the TV:
-# Settings → Updates → set channel URL → Check for updates → Install from channel
+# Publish channel.json + .raucb to GitHub Releases
+# (https://github.com/CarlosT25-png/blackhole-os/releases), then on the TV:
+# Settings → Updates → Check for updates → Install update
 ```
 
 Short version: host a `channel.json` that points at your `.raucb`. The TV downloads

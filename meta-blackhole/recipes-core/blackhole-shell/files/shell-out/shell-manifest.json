@@ -1,0 +1,114 @@
+{
+  "version": "f9a43c30afd6a5394458e4b22e4b3cf75248fef792dc56e7ea8d287d67c5fdde",
+  "generatedAt": "2026-09-15T23:55:36Z",
+  "files": [
+    {
+      "path": "/404/index.html",
+      "sha256": "48e8e3cf66ae1505c36b5e9616ce470bfe6b256fd980292803d5a9eb1193dee5"
+    },
+    {
+      "path": "/404.html",
+      "sha256": "48e8e3cf66ae1505c36b5e9616ce470bfe6b256fd980292803d5a9eb1193dee5"
+    },
+    {
+      "path": "/_next/static/chunks/255-a85cef9cc3a04b12.js",
+      "sha256": "9dd3774e91a2ae89281a60e935888436feef6dd2bc7b7ce32688e73408c72bb3"
+    },
+    {
+      "path": "/_next/static/chunks/355-88aa9099d7a6cbe9.js",
+      "sha256": "25381d7747fc2dbc06671c29cb8d632a3540db15590cfb54ab6901e90de8dc79"
+    },
+    {
+      "path": "/_next/static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "sha256": "2c752a401191671d5bbbe7514f5828bbb0a7cc50bfbe77ddaf1b1ccba4412ed2"
+    },
+    {
+      "path": "/_next/static/chunks/app/_not-found/page-90a7de4867c4d07b.js",
+      "sha256": "b95030ddc253e7239d4c6758fbe7843749ad86a8f7d4f141ffcf60c2f11679f2"
+    },
+    {
+      "path": "/_next/static/chunks/app/layout-5ffcf75975c6f018.js",
+      "sha256": "b87831d9ea8d6390989759526b09722397dbf164310070edc6921995ef5a4a4a"
+    },
+    {
+      "path": "/_next/static/chunks/app/page-a7ec12be9b324bac.js",
+      "sha256": "482761ae71e933ab869222b619cafb4336c75f4d6cda26ca6322e079b8927600"
+    },
+    {
+      "path": "/_next/static/chunks/framework-4891de286d38ef96.js",
+      "sha256": "8a3f1bf149ca2219a01468f81f522cccfa3ab7d5120af39f70f609072abb87f6"
+    },
+    {
+      "path": "/_next/static/chunks/main-2a84abe4e2dda471.js",
+      "sha256": "6558f8b4f4f6eabc93f5bf972b341625740600776ba890aad39e0618ff096c08"
+    },
+    {
+      "path": "/_next/static/chunks/main-app-f937abcf347ccd5d.js",
+      "sha256": "3c1265c120090e3bc022475fe7c9263b4887b250523fd38fb15a04d53125c496"
+    },
+    {
+      "path": "/_next/static/chunks/pages/_app-7d307437aca18ad4.js",
+      "sha256": "797ae9e9f9ae364b4152a86f0ab44d686563124477b6cb31a0f0a803243767a3"
+    },
+    {
+      "path": "/_next/static/chunks/pages/_error-cb2a52f75f2162e2.js",
+      "sha256": "caa848d8df48ee6a9872ae21aa7679970d832c8d0aa3611c517214e562f8aadf"
+    },
+    {
+      "path": "/_next/static/chunks/polyfills-42372ed130431b0a.js",
+      "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683"
+    },
+    {
+      "path": "/_next/static/chunks/webpack-c16669d89c4569f2.js",
+      "sha256": "be3846d87679bced226e71972cc918bd10520d96e8d29e8910c47195ead09f68"
+    },
+    {
+      "path": "/_next/static/css/558668b87aabd594.css",
+      "sha256": "19a24a3e0f4a8931a9bf7988eb2a2f25024a9ba3e1bb064c3846d5be038da265"
+    },
+    {
+      "path": "/_next/static/media/93a6e477e1480c92-s.woff2",
+      "sha256": "ea16948d4a91b77221f119ad27d4ac7a7581c98cf990712047f89a531a49ef28"
+    },
+    {
+      "path": "/_next/static/media/9d5a263311222317-s.p.woff2",
+      "sha256": "4fd48b2c1ab27220e71f15f990550261b35245c3bdfd8d8025b4bdac0459ee2d"
+    },
+    {
+      "path": "/_next/static/media/c7e0cf6c760983e7-s.woff2",
+      "sha256": "a22c997a894377f36d81c904163e0c05fbbcd32f0ca2e7beedb86b39be1296a1"
+    },
+    {
+      "path": "/_next/static/t2wYBhOvHqx7Yn5v6WvYM/_buildManifest.js",
+      "sha256": "549fc1f6f226df947f859689a5217eeedc49d3ff876d9f364976a47ef4aad63d"
+    },
+    {
+      "path": "/_next/static/t2wYBhOvHqx7Yn5v6WvYM/_ssgManifest.js",
+      "sha256": "678f6ce2cb80b1fe72fc67e7412be6e2ab6ada083111b64f7c40d35e3cba5e00"
+    },
+    {
+      "path": "/catalog/apps.json",
+      "sha256": "403131c2dc5abfedee655ccc2ec01c516341208b0db3bb2344997c8e7e3e5f9a"
+    },
+    {
+      "path": "/favicon.svg",
+      "sha256": "8a5c800e0e6648893beccfb2871a0dc7043a82d24b33492fb6cc0dfae4dee642"
+    },
+    {
+      "path": "/icon.svg",
+      "sha256": "2ca1edfecc4cb9083a34956995b1ea19bdd5b276808777608cda703811faf795"
+    },
+    {
+      "path": "/index.html",
+      "sha256": "f4df022d631c836e6c89bbb8b7d42bfc25271a565a570fe807a5868dace1a3f0"
+    },
+    {
+      "path": "/index.txt",
+      "sha256": "1091d6286d11da2460c97b7f4a342cc11a8d5ad8e1550b2554aebd89c2417f3e"
+    },
+    {
+      "path": "/manifest.webmanifest",
+      "sha256": "03d2e497d19da71b313161921e27ec40e35828cade8eeef381b5db7411b05a42"
+    }
+  ]
+}

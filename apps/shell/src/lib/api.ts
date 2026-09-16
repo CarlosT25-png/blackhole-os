@@ -10,9 +10,20 @@ export type AppRecord = {
   category?: string;
 };
 
+export type AspectRatio = "auto" | "16:9" | "16:10" | "4:3";
+export type RefreshHz = "auto" | 50 | 60 | 75 | 120;
+export type AdblockFiltering = "none" | "basic" | "optimal" | "complete";
+
 export type DisplaySettings = {
   scale: number;
   reducedMotion: boolean;
+  aspect: AspectRatio;
+  refreshHz: RefreshHz;
+};
+
+export type AdblockSettings = {
+  filtering: AdblockFiltering;
+  extensionId?: string;
 };
 
 export type NetworkSettings = {
@@ -21,12 +32,56 @@ export type NetworkSettings = {
   mode: string;
 };
 
+export type TimeClock = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+};
+
+export type TimeSettings = {
+  timezone: string;
+  ntp: boolean;
+  autoTimezone: boolean;
+  hour12: boolean;
+};
+
+export type PowerSettings = {
+  idleSec: number;
+};
+
 export type DeviceSettings = {
   channelUrl: string;
   catalogUrl: string;
   shellUrl: string;
   display: DisplaySettings;
+  adblock: AdblockSettings;
   network: NetworkSettings;
+  time: TimeSettings;
+  power: PowerSettings;
+};
+
+export type TimeStatus = {
+  timezone: string;
+  ntp: boolean;
+  autoTimezone?: boolean;
+  ntpActive?: boolean;
+  synchronized: boolean;
+  sync: "synced" | "waiting" | "pending" | "off";
+  iso: string;
+  clock: TimeClock;
+  hour12: boolean;
+  networkOnline: boolean;
+  backend: string;
+  zones?: Record<string, string[]>;
+};
+
+export type PowerStatus = {
+  idleSec: number;
+  sleeping: boolean;
+  idleFor?: number;
+  backend: string;
 };
 
 export type NetworkStatus = {
@@ -71,6 +126,7 @@ export type SystemInfo = {
     enabled: boolean;
     extension: string;
     note: string;
+    filtering?: AdblockFiltering;
   };
   dev: boolean;
   dataDir: string;
@@ -81,6 +137,9 @@ export type SystemInfo = {
   shellSynced?: boolean;
   shellReady?: boolean;
   display?: DisplaySettings;
+  adblock?: AdblockSettings;
+  time?: TimeStatus;
+  power?: PowerStatus;
 };
 
 export type RemoteUpdate = {
@@ -181,7 +240,7 @@ export const api = {
   bluetooth: () => request<{ bluetooth: BluetoothStatus }>("/bluetooth"),
   bluetoothAction: (
     action: "power" | "scan" | "pair" | "connect" | "disconnect" | "remove",
-    extra?: { address?: string; powered?: boolean },
+    extra?: { address?: string; powered?: boolean; pin?: string },
   ) =>
     request<{ ok: boolean; message: string; bluetooth: BluetoothStatus }>("/bluetooth", {
       method: "POST",
@@ -216,6 +275,30 @@ export const api = {
     }>("/shell/sync", {
       method: "POST",
       body: JSON.stringify(shellUrl ? { shellUrl } : {}),
+    }),
+  time: () => request<TimeStatus>("/time"),
+  saveTime: (payload: {
+    timezone?: string;
+    ntp?: boolean;
+    autoTimezone?: boolean;
+    hour12?: boolean;
+    iso?: string;
+  }) =>
+    request<{ ok: boolean; time: TimeStatus; settings: DeviceSettings }>("/time", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  power: () => request<PowerStatus>("/power"),
+  powerAction: (action: "sleep" | "wake" | "poweroff" | "activity") =>
+    request<{
+      ok: boolean;
+      action: string;
+      backend?: string;
+      message?: string;
+      power?: PowerStatus;
+    }>("/power", {
+      method: "POST",
+      body: JSON.stringify({ action }),
     }),
 };
 

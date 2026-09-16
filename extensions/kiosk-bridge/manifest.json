@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Blackhole Kiosk Bridge",
-  "version": "0.1.2",
-  "description": "Home chip + Escape/Home back to Blackhole shell; watches launch requests.",
-  "permissions": ["storage", "alarms", "tabs", "scripting"],
+  "version": "0.2.0",
+  "description": "Home chip, adblock level, Esc/Home back to Blackhole shell; watches launch requests.",
+  "permissions": ["storage", "alarms", "tabs", "scripting", "management"],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",

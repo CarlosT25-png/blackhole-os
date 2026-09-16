@@ -1,6 +1,5 @@
 header:
   version: 14
-  description: Blackhole OS common kas configuration (Scarthgap)
 
 distro: blackhole
 
@@ -23,20 +22,14 @@ repos:
       meta-python:
       meta-networking:
       meta-multimedia:
+      meta-webserver:
 
   meta-raspberrypi:
     url: https://github.com/agherzan/meta-raspberrypi
     branch: scarthgap
 
-  meta-clang:
-    url: https://github.com/kraj/meta-clang
-    branch: scarthgap
-
-  meta-browser:
-    url: https://github.com/OSSystems/meta-browser
-    branch: master
-    layers:
-      meta-chromium:
+  # meta-clang + meta-browser are only needed to compile Chromium from source.
+  # Default images use chromium-bin (Chrome for Testing) instead.
 
   meta-rauc:
     url: https://github.com/rauc/meta-rauc
@@ -49,8 +42,14 @@ repos:
       meta-rauc-raspberrypi:
       meta-rauc-qemux86:
 
+  # Required by meta-rauc-raspberrypi (LAYERDEPENDS: lts-u-boot-mixin).
+  # Also supplies newer U-Boot for raspberrypi5 on Scarthgap.
+  meta-lts-mixins:
+    url: https://git.yoctoproject.org/git/meta-lts-mixins
+    branch: scarthgap/u-boot
+
   meta-blackhole:
-    path: ../meta-blackhole
+    path: meta-blackhole
 
 local_conf_header:
   blackhole-common: |
@@ -59,11 +58,15 @@ local_conf_header:
     EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
     USER_CLASSES ?= "buildstats"
     PATCHRESOLVE = "noop"
+    # Required for Raspberry Pi CYW43xx Wi-Fi firmware (meta-raspberrypi).
+    LICENSE_FLAGS_ACCEPTED += "synaptics-killswitch"
+    # Inode thresholds must be "100K" not "100M" — Docker Desktop volumes
+    # often have ~60M total inodes, so a 100M free-inode floor always trips.
     BB_DISKMON_DIRS ??= "\
-        STOPTASKS,${TMPDIR},1G,100M \
-        STOPTASKS,${DL_DIR},1G,100M \
-        STOPTASKS,${SSTATE_DIR},1G,100M \
-        STOPTASKS,/tmp,100M,10M \
+        STOPTASKS,${TMPDIR},1G,100K \
+        STOPTASKS,${DL_DIR},1G,100K \
+        STOPTASKS,${SSTATE_DIR},1G,100K \
+        STOPTASKS,/tmp,100M,10K \
         HALT,${TMPDIR},100M,1K \
         HALT,${DL_DIR},100M,1K \
         HALT,${SSTATE_DIR},100M,1K \
@@ -71,6 +74,9 @@ local_conf_header:
     DISTRO_FEATURES:append = " rauc systemd wayland opengl"
     IMAGE_FSTYPES:append = " ext4 wic wic.bmap"
     IMAGE_INSTALL:append = " rauc"
-    # Chromium builds are heavy
+    # Chromium builds are heavy — keep defaults on big Linux hosts.
+    # Override for Docker Desktop on Mac with limited RAM:
+    #   BB_NUMBER_THREADS = "2"
+    #   PARALLEL_MAKE = "-j 2"
     BB_NUMBER_THREADS ?= "${@oe.utils.cpu_count()}"
     PARALLEL_MAKE ?= "-j ${@oe.utils.cpu_count()}"

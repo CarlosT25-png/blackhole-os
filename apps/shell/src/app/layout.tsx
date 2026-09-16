@@ -23,7 +23,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={bricolage.variable}>
+    <html
+      lang="en"
+      className={bricolage.variable}
+      style={{ background: "#06070b", colorScheme: "dark" }}
+    >
       <body style={{ fontFamily: "var(--font-bricolage), system-ui, sans-serif" }}>
         {children}
       </body>

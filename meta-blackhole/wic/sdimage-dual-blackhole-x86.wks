@@ -4,5 +4,5 @@
 part /boot --source bootimg-efi --sourceparams="loader=grub-efi" --ondisk sda --fstype=vfat --label efi --active --align 1024 --size 64
 part / --source rootfs --ondisk sda --fstype=ext4 --label rootfs_a --align 1024 --size 4096
 part / --source rootfs --ondisk sda --fstype=ext4 --label rootfs_b --align 1024 --size 4096
-part /var/lib/blackhole --ondisk sda --fstype=ext4 --label bhdata --align 1024 --size 1024
+part --ondisk sda --fstype=ext4 --label bhdata --align 1024 --size 1024
 bootloader --ptable gpt

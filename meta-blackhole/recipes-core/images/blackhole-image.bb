@@ -1,12 +1,15 @@
 SUMMARY = "Blackhole OS kiosk image"
-DESCRIPTION = "Wayland kiosk with Chromium, uBlock Origin, Next.js shell, blackholed, and RAUC."
+DESCRIPTION = "Wayland kiosk with prebuilt Chromium, Next.js shell, blackholed, and RAUC."
 LICENSE = "Apache-2.0"
 
 inherit core-image
 
+# "weston" in IMAGE_FEATURES switches SYSTEMD_DEFAULT_TARGET to graphical.target
+# (without it the image stays on multi-user and the kiosk never starts).
 IMAGE_FEATURES += " \
     ssh-server-openssh \
     package-management \
+    weston \
 "
 
 IMAGE_INSTALL += " \
@@ -14,7 +17,7 @@ IMAGE_INSTALL += " \
     kernel-modules \
     weston \
     weston-init \
-    chromium-ozone-wayland \
+    chromium-bin \
     nginx \
     python3 \
     ca-certificates \
@@ -26,6 +29,9 @@ IMAGE_INSTALL += " \
     networkmanager \
     networkmanager-nmcli \
     bluez5 \
+    mesa-megadriver \
+    tzdata \
+    systemd-timesyncd \
 "
 
 # Raspberry Pi onboard CYW43xx Wi-Fi / Bluetooth (UART attach + firmware).
@@ -36,6 +42,8 @@ IMAGE_INSTALL:append:rpi = " \
     linux-firmware-rpidistro-bcm43436 \
     linux-firmware-rpidistro-bcm43436s \
     linux-firmware-rpidistro-bcm43456 \
+    v4l-utils \
+    libv4l \
 "
 
 # Persist app data and Chromium profile on the data partition.

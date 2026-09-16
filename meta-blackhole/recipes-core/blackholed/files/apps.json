@@ -216,6 +216,132 @@
     "category": "video"
   },
   {
+    "id": "espn",
+    "name": "ESPN",
+    "description": "Live sports, ESPN+, and exclusive originals.",
+    "manifestUrl": "https://static-assets.bamgrid.com/product/espn/favicons/manifest.d41d8cd98f00b204e9800998ecf8427e.json",
+    "startUrl": "https://plus.espn.com/",
+    "icon": "https://static-assets.bamgrid.com/product/espn/favicons/E-Logo-192x192.5b5e8d830ee5a32d1ab469a2bb1b8f41.png",
+    "category": "sports"
+  },
+  {
+    "id": "mlbtv",
+    "name": "MLB.TV",
+    "description": "Live out-of-market baseball, MLB Network, and replays.",
+    "manifestUrl": "https://www.mlb.com/manifest.json",
+    "startUrl": "https://www.mlb.com/live-stream-games",
+    "icon": "https://www.mlbstatic.com/mlb.com/images/logos/apple-touch-icons-180x180/mlb.png",
+    "category": "sports"
+  },
+  {
+    "id": "nba",
+    "name": "NBA",
+    "description": "Live games, League Pass, and highlights.",
+    "manifestUrl": "https://www.nba.com/site-manifest.json",
+    "startUrl": "https://www.nba.com/watch/featured",
+    "icon": "https://www.nba.com/android-chrome-192x192.png",
+    "category": "sports"
+  },
+  {
+    "id": "nflplus",
+    "name": "NFL+",
+    "description": "NFL Network, RedZone, replays, and live games.",
+    "manifestUrl": "https://www.nfl.com/manifest.json",
+    "startUrl": "https://www.nfl.com/plus/",
+    "icon": "https://static.www.nfl.com/league/run3dfyjniqxah4ehxfu",
+    "category": "sports"
+  },
+  {
+    "id": "wnba",
+    "name": "WNBA",
+    "description": "Live games, League Pass, and highlights.",
+    "manifestUrl": "https://www.wnba.com/manifest.json",
+    "startUrl": "https://www.wnba.com/watch",
+    "icon": "https://www.wnba.com/images/WNBA_fallback.png",
+    "category": "sports"
+  },
+  {
+    "id": "nhl",
+    "name": "NHL",
+    "description": "Hockey scores, highlights, and live game info.",
+    "manifestUrl": "https://www.nhl.com/manifest.json",
+    "startUrl": "https://www.nhl.com/",
+    "icon": "https://www.nhl.com/assets/icons/fav/nhl/favicon-apple-touch-icon.png",
+    "category": "sports"
+  },
+  {
+    "id": "mls",
+    "name": "MLS",
+    "description": "Major League Soccer matches, highlights, and news.",
+    "manifestUrl": "https://www.mlssoccer.com/manifest.json",
+    "startUrl": "https://www.mlssoccer.com/",
+    "icon": "https://images.mlssoccer.com/image/upload/assets/logos/apple-touch-icon.png",
+    "category": "sports"
+  },
+  {
+    "id": "f1tv",
+    "name": "F1 TV",
+    "description": "Live Formula 1 races, onboard cameras, and replays.",
+    "manifestUrl": "https://f1tv.formula1.com/manifest.webmanifest",
+    "startUrl": "https://f1tv.formula1.com/",
+    "icon": "https://media.formula1.com/image/upload/c_lfill,w_128,h_128/v1740000001/fom-website/2026/F1%20App%20Store%20Logo/f1-app-logo.svg",
+    "category": "sports"
+  },
+  {
+    "id": "dazn",
+    "name": "DAZN",
+    "description": "Live sports, boxing, and NHL.TV in supported regions.",
+    "manifestUrl": "https://www.dazn.com/icons/manifest.json",
+    "startUrl": "https://www.dazn.com/",
+    "icon": "https://www.dazn.com/icons/android-chrome-192x192.png",
+    "category": "sports"
+  },
+  {
+    "id": "fubo",
+    "name": "Fubo",
+    "description": "Live sports and TV without cable.",
+    "manifestUrl": "https://www.fubo.tv/manifest.json",
+    "startUrl": "https://www.fubo.tv/welcome",
+    "icon": "https://assets-imgx.fubo.tv/favicons/android-chrome-192x192.png",
+    "category": "sports"
+  },
+  {
+    "id": "foxsports",
+    "name": "FOX Sports",
+    "description": "Live games, FOX Sports shows, and highlights.",
+    "manifestUrl": "https://www.foxsports.com/manifest.webmanifest",
+    "startUrl": "https://www.foxsports.com/live",
+    "icon": "https://www.foxsports.com/android-chrome-192x192.png",
+    "category": "sports"
+  },
+  {
+    "id": "fanduelsports",
+    "name": "FanDuel Sports Network",
+    "description": "Regional live sports (formerly Bally Sports).",
+    "manifestUrl": "https://fanduelsportsnetwork.com/manifest.json",
+    "startUrl": "https://fanduelsportsnetwork.com/",
+    "icon": "https://fanduelsportsnetwork.com/favicon.png",
+    "category": "sports"
+  },
+  {
+    "id": "ufcfightpass",
+    "name": "UFC Fight Pass",
+    "description": "Live UFC events, prelims, and fight library.",
+    "manifestUrl": "https://ufcfightpass.com/manifest.json",
+    "startUrl": "https://ufcfightpass.com/",
+    "icon": "https://www.ufc.com/apple-touch-icon.png",
+    "category": "sports"
+  },
+  {
+    "id": "pgatour",
+    "name": "PGA TOUR",
+    "description": "Live golf coverage, featured groups, and highlights.",
+    "manifestUrl": "https://www.pgatour.com/site.webmanifest?v=4",
+    "startUrl": "https://www.pgatour.com/watch",
+    "icon": "https://www.pgatour.com/android-chrome-192x192.png?v=4",
+    "category": "sports"
+  },
+  {
     "id": "wikipedia",
     "name": "Wikipedia",
     "description": "The free encyclopedia.",

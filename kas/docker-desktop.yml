@@ -1,0 +1,13 @@
+header:
+  version: 14
+
+# Safer parallelism for Docker Desktop (esp. macOS): full -j$(nproc) often OOMs
+# while linking gcc and produces bogus "undefined reference to lang_hooks" errors.
+local_conf_header:
+  blackhole-docker-desktop: |
+    BB_NUMBER_THREADS = "4"
+    PARALLEL_MAKE = "-j4"
+    # GCC linking is especially memory-hungry.
+    PARALLEL_MAKE:pn-gcc = "-j2"
+    PARALLEL_MAKE:pn-gcc-cross-aarch64 = "-j2"
+    PARALLEL_MAKE:pn-gcc-cross-x86_64 = "-j2"

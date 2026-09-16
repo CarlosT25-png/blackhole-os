@@ -1,7 +1,7 @@
 {
   "compatible": "blackhole-os",
   "version": "0.2.0",
-  "bundleUrl": "https://github.com/example/blackhole-os/releases/download/v0.2.0/blackhole-bundle.raucb",
+  "bundleUrl": "https://github.com/CarlosT25-png/blackhole-os/releases/download/v0.2.0/blackhole-bundle.raucb",
   "sha256": "replace-with-sha256-of-raucb",
-  "notes": "Example channel entry. Point Settings → Updates at your real channel URL."
+  "notes": "Attach this file plus the .raucb to a GitHub Release. Devices fetch https://github.com/CarlosT25-png/blackhole-os/releases/latest/download/channel.json"
 }

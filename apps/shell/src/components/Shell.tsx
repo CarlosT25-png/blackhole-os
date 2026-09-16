@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type AppRecord, type SystemInfo, type UpdateStatus } from "@/lib/api";
 import SettingsView from "@/components/SettingsView";
+import { applyDisplay } from "@/lib/display";
 
 init({
   debug: false,
@@ -67,20 +68,69 @@ function matchesQuery(app: AppRecord, query: string) {
   );
 }
 
-function Clock() {
+function PowerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        d="M12 2.75v8.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7.05 6.2a8 8 0 1 0 9.9 0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        d="M15.2 3.6a8.4 8.4 0 1 0 5.1 13.1 6.9 6.9 0 0 1-5.1-13.1z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function Clock({ timezone, hour12 }: { timezone?: string; hour12?: boolean }) {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
     const tick = () => setNow(new Date());
     tick();
     const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [timezone, hour12]);
   if (!now) {
     return <span className="clock" aria-hidden="true">--:--</span>;
   }
+  const options: Intl.DateTimeFormatOptions = {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: hour12 ?? true,
+  };
+  let label = now.toLocaleTimeString([], options);
+  try {
+    label = now.toLocaleTimeString(
+      [],
+      timezone ? { ...options, timeZone: timezone } : options,
+    );
+  } catch {
+    /* invalid timezone */
+  }
   return (
     <time className="clock" dateTime={now.toISOString()}>
-      {now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+      {label}
     </time>
   );
 }
@@ -407,6 +457,175 @@ function SideloadDialog({
   );
 }
 
+function PowerMenu({
+  open,
+  busy,
+  onToggle,
+  onClose,
+  onSleep,
+  onPowerOff,
+}: {
+  open: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onSleep: () => void;
+  onPowerOff: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { ref, focusKey } = useFocusable({
+    focusKey: "TOP_POWER_MENU",
+    trackChildren: true,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const id = window.setTimeout(() => setFocus("TOP_POWER_SLEEP"), 40);
+    return () => window.clearTimeout(id);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [open, onClose]);
+
+  return (
+    <FocusContext.Provider value={focusKey}>
+      <div className="power-menu" ref={rootRef}>
+        <div ref={ref as never}>
+          <Focusable
+            focusKey="TOP_POWER"
+            className="topbar-power"
+            aria-label="Power"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onEnterPress={() => {
+              if (!busy) onToggle();
+            }}
+          >
+            <PowerIcon />
+          </Focusable>
+          {open ? (
+            <div className="power-menu-panel" role="menu" aria-label="Power options">
+              <Focusable
+                focusKey="TOP_POWER_SLEEP"
+                className="power-menu-item"
+                role="menuitem"
+                onEnterPress={() => {
+                  if (busy) return;
+                  onClose();
+                  onSleep();
+                }}
+              >
+                <MoonIcon />
+                Sleep
+              </Focusable>
+              <Focusable
+                focusKey="TOP_POWER_OFF"
+                className="power-menu-item"
+                role="menuitem"
+                onEnterPress={() => {
+                  if (busy) return;
+                  onClose();
+                  onPowerOff();
+                }}
+              >
+                <PowerIcon />
+                Power off
+              </Focusable>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </FocusContext.Provider>
+  );
+}
+
+function PowerOffDialog({
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { ref, focusKey } = useFocusable({
+    focusKey: "TOP_POWER_DIALOG",
+    trackChildren: true,
+    isFocusBoundary: true,
+  });
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setFocus("TOP_POWER_CANCEL"), 40);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose]);
+
+  return (
+    <FocusContext.Provider value={focusKey}>
+      <div
+        className="modal-backdrop"
+        onClick={() => {
+          if (!busy) onClose();
+        }}
+        role="presentation"
+      >
+        <div
+          ref={ref as never}
+          className="modal-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="top-power-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h3 id="top-power-title" className="panel-title">
+            Power off?
+          </h3>
+          <p className="panel-copy">
+            This TV will shut down. Use the power button on the device to turn it back on.
+          </p>
+          <div className="modal-actions">
+            <Focusable
+              focusKey="TOP_POWER_CANCEL"
+              className="ghost-btn"
+              onEnterPress={() => {
+                if (!busy) onClose();
+              }}
+            >
+              Cancel
+            </Focusable>
+            <Focusable
+              focusKey="TOP_POWER_CONFIRM"
+              className="primary-btn"
+              onEnterPress={() => {
+                if (!busy) onConfirm();
+              }}
+            >
+              {busy ? "Powering off…" : "Power off"}
+            </Focusable>
+          </div>
+        </div>
+      </div>
+    </FocusContext.Provider>
+  );
+}
+
 export default function Shell() {
   const [view, setView] = useState<View>("home");
   const [installed, setInstalled] = useState<AppRecord[]>([]);
@@ -415,6 +634,9 @@ export default function Shell() {
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [sideloadUrl, setSideloadUrl] = useState("");
   const [sideloadOpen, setSideloadOpen] = useState(false);
+  const [powerMenuOpen, setPowerMenuOpen] = useState(false);
+  const [powerConfirm, setPowerConfirm] = useState(false);
+  const [powerBusy, setPowerBusy] = useState(false);
   const [storeQuery, setStoreQuery] = useState("");
   const [storePage, setStorePage] = useState(0);
   const [toast, setToast] = useState<Toast>(null);
@@ -426,9 +648,15 @@ export default function Shell() {
   const snapshotRef = useRef<AppRecord[] | null>(null);
   const arrangingRef = useRef(false);
   const sideloadOpenRef = useRef(false);
+  const powerMenuOpenRef = useRef(false);
+  const powerConfirmRef = useRef(false);
+  const powerBusyRef = useRef(false);
   installedRef.current = installed;
   arrangingRef.current = arranging;
   sideloadOpenRef.current = sideloadOpen;
+  powerMenuOpenRef.current = powerMenuOpen;
+  powerConfirmRef.current = powerConfirm;
+  powerBusyRef.current = powerBusy;
 
   const { ref, focusKey } = useFocusable({
     focusKey: "SHELL_ROOT",
@@ -440,6 +668,25 @@ export default function Shell() {
     setToast({ message, kind });
     window.setTimeout(() => setToast(null), 4200);
   }, []);
+
+  const runPower = useCallback(
+    async (action: "sleep" | "poweroff") => {
+      setPowerBusy(true);
+      try {
+        const res = await api.powerAction(action);
+        if (res.power) {
+          setSystem((prev) => (prev ? { ...prev, power: res.power } : prev));
+        }
+        showToast(res.message || (action === "sleep" ? "Sleeping" : "Powering off"));
+        if (action === "poweroff") setPowerConfirm(false);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Power action failed", "error");
+      } finally {
+        setPowerBusy(false);
+      }
+    },
+    [showToast],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -453,6 +700,9 @@ export default function Shell() {
       setCatalog(catalogRes.apps);
       setSystem(systemRes);
       setUpdate(updateRes);
+      if (systemRes.display) {
+        applyDisplay(systemRes.display);
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not reach blackholed", "error");
     } finally {
@@ -463,6 +713,24 @@ export default function Shell() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let last = 0;
+    const ping = () => {
+      const now = Date.now();
+      if (now - last < 5000) return;
+      last = now;
+      void api.powerAction("activity").catch(() => undefined);
+    };
+    window.addEventListener("keydown", ping, true);
+    window.addEventListener("pointerdown", ping, { capture: true, passive: true });
+    window.addEventListener("pointermove", ping, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("keydown", ping, true);
+      window.removeEventListener("pointerdown", ping, true);
+      window.removeEventListener("pointermove", ping, true);
+    };
+  }, []);
 
   useEffect(() => {
     const preferred =
@@ -580,6 +848,17 @@ export default function Shell() {
         void finishArrange(false);
         return;
       }
+      if (powerConfirmRef.current) {
+        event.preventDefault();
+        if (!powerBusyRef.current) setPowerConfirm(false);
+        return;
+      }
+      if (powerMenuOpenRef.current) {
+        event.preventDefault();
+        setPowerMenuOpen(false);
+        setFocus("TOP_POWER");
+        return;
+      }
       if (sideloadOpenRef.current) {
         event.preventDefault();
         closeSideload();
@@ -660,7 +939,17 @@ export default function Shell() {
       <div className="app-root" ref={ref}>
         <header className="topbar">
           <h1 className="wordmark">Blackhole</h1>
-          <Clock />
+          <div className="topbar-tools">
+            <Clock timezone={system?.time?.timezone} hour12={system?.time?.hour12} />
+            <PowerMenu
+              open={powerMenuOpen}
+              busy={powerBusy}
+              onToggle={() => setPowerMenuOpen((prev) => !prev)}
+              onClose={() => setPowerMenuOpen(false)}
+              onSleep={() => void runPower("sleep")}
+              onPowerOff={() => setPowerConfirm(true)}
+            />
+          </div>
         </header>
 
         <nav className="nav-row" aria-label="Main">
@@ -945,6 +1234,16 @@ export default function Shell() {
             onUrlChange={setSideloadUrl}
             onAdd={() => void installUrl()}
             onClose={closeSideload}
+          />
+        ) : null}
+
+        {powerConfirm ? (
+          <PowerOffDialog
+            busy={powerBusy}
+            onClose={() => {
+              if (!powerBusy) setPowerConfirm(false);
+            }}
+            onConfirm={() => void runPower("poweroff")}
           />
         ) : null}
 

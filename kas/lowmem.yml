@@ -1,0 +1,7 @@
+header:
+  version: 14
+
+local_conf_header:
+  blackhole-lowmem: |
+    BB_NUMBER_THREADS = "2"
+    PARALLEL_MAKE = "-j2"

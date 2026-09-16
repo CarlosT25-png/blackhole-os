@@ -1,6 +1,6 @@
 SUMMARY = "Blackhole Next.js kiosk shell (static export)"
 LICENSE = "Apache-2.0"
-LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a44d86328cde96c0d0c3"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
 # Pre-built static export is expected at files/shell-out (produced by
 # `npm run build` in apps/shell). CI / kas should populate this before bitbake.

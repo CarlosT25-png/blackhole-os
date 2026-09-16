@@ -27,6 +27,14 @@ downloads/
 tmp/
 .kas/
 
+# Kas-cloned layers (not the custom meta-blackhole layer)
+/poky/
+/meta-openembedded/
+/meta-raspberrypi/
+/meta-rauc/
+/meta-rauc-community/
+/meta-lts-mixins/
+
 # OS / IDE
 .DS_Store
 .idea/

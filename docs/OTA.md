@@ -16,7 +16,7 @@ bitbake blackhole-bundle → upload .raucb +          Settings → Check
 
 1. Build a signed bundle: `bitbake blackhole-bundle` → `*.raucb`
 2. Publish `channel.json` + the `.raucb` (GitHub Releases or S3/CloudFront)
-3. On the TV, Settings → Updates → set channel URL → **Check for updates**
+3. On the TV, Settings → Updates → **Check for updates**
 4. **Install update** downloads the bundle and runs `rauc install`
 5. Reboot to boot the new slot
 
@@ -48,16 +48,16 @@ Good for open-source / small fleets.
 3. Stable channel URL:
 
 ```text
-https://github.com/<user>/<repo>/releases/latest/download/channel.json
+https://github.com/CarlosT25-png/blackhole-os/releases/latest/download/channel.json
 ```
 
 Per-version bundle URL:
 
 ```text
-https://github.com/<user>/<repo>/releases/download/v0.2.0/blackhole-bundle.raucb
+https://github.com/CarlosT25-png/blackhole-os/releases/download/v0.2.0/blackhole-bundle.raucb
 ```
 
-In Settings, set the channel to the `…/latest/download/channel.json` URL.
+Devices already use that latest `channel.json` URL. Attach `channel.json` and the `.raucb` to a GitHub Release; Settings → Updates will pick it up.
 
 **Limits:** public release assets are fine; very large bundles may hit GitHub
 asset size limits — then use S3.
